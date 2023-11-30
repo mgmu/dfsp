@@ -75,7 +75,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	if resp.StatusCode == 404 {
-		err = fmt.Errorf("Peer %q is unknowned")
+		err = fmt.Errorf("Peer %q is unknown", p)
 		return nil, err
 	}
 
