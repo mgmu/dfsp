@@ -10,10 +10,11 @@ import (
 	"time"
 )
 
-const serverUrl = "https://jch.irif.fr:8443/"
+const serverUrl = "https://jch.irif.fr:8443"
+const peersUrl = "/peers"
+const addressesUrl = "/addresses"
 
 var knownPeers = make(map[string]knownPeer)
-
 var debug = true
 
 func main() {
@@ -28,10 +29,8 @@ func main() {
 }
 
 func discoverPeers(client *http.Client) {
-	const peersUrl = "/peers/"
-
 	if debug {
-		fmt.Println("Sending GET /peers/")
+		fmt.Println("Sent GET peers")
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl)
@@ -41,7 +40,7 @@ func discoverPeers(client *http.Client) {
 	}
 
 	if debug {
-		fmt.Println("Received GET /peers/ response")
+		fmt.Println("Received GET /peers response")
 	}
 
 	buf, err := io.ReadAll(resp.Body)
