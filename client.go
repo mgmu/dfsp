@@ -27,7 +27,12 @@ func main() {
 		Timeout:   50 * time.Second,
 	}
 
-	discoverPeers(client)
+	// discoverPeers(client)
+	k, err := getPeerPublicKey(client, "jch")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(k)
 }
 
 func discoverPeers(client *http.Client) {
@@ -214,4 +219,45 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	return addrs, nil
+}
+
+// getPeerPublicKey returns the public key of the peer p. If this function
+// returns nil as err, it can mean two things: if the byte slice is not nil then
+// the peer is known and has announced a public key, if the byte slice is nil
+// then the peer is known but has not announced any public key yet. If an error
+// is encoutered during the process, err is not nil but the byte slice is.
+func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
+	if debug {
+		fmt.Println("Sent GET /peers/" + p + keyUrl)
+	}
+
+	resp, err := client.Get(serverUrl + peersUrl + "/" + p + keyUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case 200:
+		if debug {
+			fmt.Println("Received GET /peers/" + p + keyUrl + " 200")
+		}
+		buf, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println(len(buf))
+		return buf[:64], nil
+	case 204:
+		if debug {
+			fmt.Println("Received GET /peers/" + p + keyUrl + " 204")
+		}
+		return nil, nil
+	case 404:
+		err = fmt.Errorf("Peer %q is unknown", p)
+		return nil, err
+	default:
+		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
+		return nil, err
+	}
 }
