@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net"
 	"strings"
 	"time"
 )
@@ -33,11 +34,11 @@ func discoverPeers(client *http.Client) {
 		fmt.Println("Sent GET peers")
 	}
 
-	resp, err := client.Get(serverUrl + peersUrl)
-	defer resp.Body.Close()
+	resp, err := client.Get(serverUrl + peersUrl + "/")
 	if err != nil {
 		log.Fatal("Get:", err)
 	}
+	defer resp.Body.Close()
 
 	if debug {
 		fmt.Println("Received GET /peers response")
@@ -53,4 +54,63 @@ func discoverPeers(client *http.Client) {
 	for i := 0; i < len(peers); i++ {
 		log.Fatal("TODO: get peers' socket addresses")
 	}
+}
+
+// getPeerSocketAddrs returns a list of pointers to UDP socket addresses of the
+// peer p. If a socket address can not be resolved, or if the pair is unknowned,
+// or if the server returned a non-2xx status code, returns nil and the
+// corresponding error.
+func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
+	if debug {
+		fmt.Println("Sent GET /peers/" + p + addressesUrl)
+	}
+
+	resp, err := client.Get(serverUrl + peersUrl + "/" + p + addressesUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	if debug {
+		fmt.Println("Received GET /peers/" + p + addressesUrl)
+	}
+
+	if resp.StatusCode == 404 {
+		err = fmt.Errorf("Peer %q is unknowned")
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("Server returned status code %i", resp.StatusCode)
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	buf, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if debug {
+		fmt.Println("Reading UDP socket addresses of peer " + p)
+	}
+
+	addrsAsStr := strings.Split(string(buf), "\n")
+	len := len(addrsAsStr)
+	if len > 1 {
+		len = len - 1; // because of empty string caused by last '\n' in Split
+	}
+	var addrs = make([]*net.UDPAddr, len)
+	for i := 0; i < len; i++ {
+		addrs[i], err = net.ResolveUDPAddr("", addrsAsStr[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if debug {
+		fmt.Println("Succesfully read UDP socket addresses")
+	}
+
+	return addrs, nil
 }
