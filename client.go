@@ -163,7 +163,7 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 // corresponding error.
 func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	if debug {
-		fmt.Println("Sent GET /peers/" + p + addressesUrl)
+		fmt.Println("Sending GET /peers/" + p + addressesUrl)
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + addressesUrl)
@@ -172,7 +172,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	if debug {
-		fmt.Println("Received GET /peers/" + p + addressesUrl)
+		fmt.Println("Receiving GET /peers/" + p + addressesUrl)
 	}
 
 	if resp.StatusCode == 404 {
