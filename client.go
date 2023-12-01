@@ -35,7 +35,7 @@ func discoverPeers(client *http.Client) {
 		fmt.Println("Sending GET peers")
 	}
 
-	resp, err := client.Get(serverUrl + peersUrl + "/")
+	resp, err := client.Get(serverUrl + peersUrl)
 	if err != nil {
 		log.Fatal("Get:", err)
 	}
@@ -149,10 +149,10 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 		}
 		return nil, nil
 	case 404:
-		err = fmt.Errorf("Peer %q is unknown")
+		err = fmt.Errorf("Peer %q is unknown", p)
 		return nil, err
 	default:
-		err = fmt.Errorf("Server returned status code %i", resp.StatusCode)
+		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
 		return nil, err
 	}
 }
