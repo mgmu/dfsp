@@ -28,12 +28,7 @@ func main() {
 		Timeout:   50 * time.Second,
 	}
 
-	// discoverPeers(client)
-	k, err := getPeerPublicKey(client, "jch")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(k)
+	discoverPeers(client)
 }
 
 func discoverPeers(client *http.Client) {
@@ -64,7 +59,7 @@ func discoverPeers(client *http.Client) {
 }
 
 // getPeerSocketAddrs returns a list of pointers to UDP socket addresses of the
-// peer p. If a socket address can not be resolved, or if the pair is unknowned,
+// peer p. If a socket address can not be resolved, or if the pair is unknown,
 // or if the server returned a non-2xx status code, returns nil and the
 // corresponding error.
 func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
@@ -82,12 +77,12 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	if resp.StatusCode == 404 {
-		err = fmt.Errorf("Peer %q is unknown\n", p)
+		err = fmt.Errorf("Peer %q is unknown", p)
 		return nil, err
 	}
 
 	if resp.StatusCode != 200 {
-		err = fmt.Errorf("Server returned status code %d\n", resp.StatusCode)
+		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
 		return nil, err
 	}
 
@@ -129,7 +124,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 // is encoutered during the process, err is not nil but the byte slice is.
 func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 	if debug {
-		fmt.Println("Sent GET /peers/" + p + keyUrl)
+		fmt.Println("Sending GET /peers/" + p + keyUrl)
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + keyUrl)
@@ -141,7 +136,7 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 	switch resp.StatusCode {
 	case 200:
 		if debug {
-			fmt.Println("Received GET /peers/" + p + keyUrl + " 200")
+			fmt.Println("Receiving GET /peers/" + p + keyUrl + " 200")
 		}
 		buf, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -170,7 +165,7 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 // encoutered during the process, err is not nil but the byte slice is.
 func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 	if debug {
-		fmt.Println("Sent GET /peers/" + p + rootHashUrl)
+		fmt.Println("Sending GET /peers/" + p + rootHashUrl)
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + rootHashUrl)
