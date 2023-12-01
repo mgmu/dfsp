@@ -31,7 +31,7 @@ func main() {
 
 func discoverPeers(client *http.Client) {
 	if debug {
-		fmt.Println("Sent GET peers")
+		fmt.Println("Sending GET peers")
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/")
@@ -41,7 +41,7 @@ func discoverPeers(client *http.Client) {
 	defer resp.Body.Close()
 
 	if debug {
-		fmt.Println("Received GET /peers response")
+		fmt.Println("Receiving GET /peers response")
 	}
 
 	buf, err := io.ReadAll(resp.Body)
@@ -62,7 +62,7 @@ func discoverPeers(client *http.Client) {
 // corresponding error.
 func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	if debug {
-		fmt.Println("Sent GET /peers/" + p + addressesUrl)
+		fmt.Println("Sending GET /peers/" + p + addressesUrl)
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + addressesUrl)
@@ -71,16 +71,16 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	if debug {
-		fmt.Println("Received GET /peers/" + p + addressesUrl)
+		fmt.Println("Receiving GET /peers/" + p + addressesUrl)
 	}
 
 	if resp.StatusCode == 404 {
-		err = fmt.Errorf("Peer %q is unknown", p)
+		err = fmt.Errorf("Peer %q is unknown\n", p)
 		return nil, err
 	}
 
 	if resp.StatusCode != 200 {
-		err = fmt.Errorf("Server returned status code %i", resp.StatusCode)
+		err = fmt.Errorf("Server returned status code %d\n", resp.StatusCode)
 		return nil, err
 	}
 
