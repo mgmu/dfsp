@@ -46,7 +46,6 @@ func discoverPeers(client *http.Client) {
 		log.Fatal("Get:", err)
 	}
 	defer resp.Body.Close()
-	defer resp.Body.Close()
 
 	if debug {
 		fmt.Println("Receiving GET /peers response")
