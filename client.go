@@ -71,6 +71,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if debug {
 		fmt.Println("Receiving GET /peers/" + p + addressesUrl)
@@ -85,8 +86,6 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
 		return nil, err
 	}
-
-	defer resp.Body.Close()
 
 	buf, err := io.ReadAll(resp.Body)
 	if err != nil {
