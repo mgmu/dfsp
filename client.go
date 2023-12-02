@@ -29,6 +29,13 @@ func main() {
 	}
 
 	discoverPeers(client)
+	if debug {
+		fmt.Println("Known peers:")
+		for k, v := range knownPeers {
+			fmt.Println(k)
+			fmt.Println(v)
+		}
+	}
 }
 
 func discoverPeers(client *http.Client) {

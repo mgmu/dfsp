@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"time"
 )
@@ -25,4 +26,16 @@ func newKnownPeer(addrs []*net.UDPAddr, key []byte,
 	}
 	kh := knownPeer{addrs, key, rootHash, false, time.Now()}
 	return &kh
+}
+
+func (kp *knownPeer) String() string {
+	res := " Addresses:\n"
+	for _, addr := range kp.addrs {
+		res += fmt.Sprintf("  %s\n", addr.String())
+	}
+	res += fmt.Sprintf(" Public key: %v\n", kp.key)
+	res += fmt.Sprintf(" Root hash: %v\n", kp.rootHash)
+	res += fmt.Sprintf(" Handshake made: %t\n", kp.handshake_made)
+	res += fmt.Sprintf(" Last interaction time: %s\n", kp.last_interaction_time)
+	return res
 }
