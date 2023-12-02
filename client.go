@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -50,15 +50,12 @@ func discoverPeers(client *http.Client) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Fatalf("Server returned status code %d instead of 200", resp.StatusCode)
+		log.Fatalf("Server returned status code %d instead of 200",
+			resp.StatusCode)
 	}
 
 	if debug {
 		fmt.Println("Receiving GET /peers response")
-	}
-
-	if resp.StatusCode != 200 {
-		log.Fatal("Server did not return status code 200")
 	}
 
 	buf, err := io.ReadAll(resp.Body)
@@ -81,7 +78,7 @@ func discoverPeers(client *http.Client) {
 		if err != nil {
 			log.Fatal("getPeerRootHash:f, err")
 		}
-		knownPeers[peers[i]] = newKnownPeer(addrs, key,	rootHash)
+		knownPeers[peers[i]] = newKnownPeer(addrs, key, rootHash)
 	}
 }
 
@@ -216,5 +213,5 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 	default:
 		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
 		return nil, err
-	}	
+	}
 }
