@@ -57,6 +57,10 @@ func discoverPeers(client *http.Client) {
 		fmt.Println("Receiving GET /peers response")
 	}
 
+	if resp.StatusCode != 200 {
+		log.Fatal("Server did not return status code 200")
+	}
+
 	buf, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal("Get:", err)
