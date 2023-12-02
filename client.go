@@ -42,6 +42,10 @@ func discoverPeers(client *http.Client) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		log.Fatalf("Server returned status code %d instead of 200", resp.StatusCode)
+	}
+
 	if debug {
 		fmt.Println("Receiving GET /peers response")
 	}
