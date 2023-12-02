@@ -17,7 +17,7 @@ const addressesUrl = "/addresses"
 const keyUrl = "/key"
 const rootHashUrl = "/root"
 
-var knownPeers = make(map[string]knownPeer)
+var knownPeers = make(map[string]*knownPeer)
 var debug = true
 
 func main() {
@@ -52,9 +52,21 @@ func discoverPeers(client *http.Client) {
 	}
 
 	peers := strings.Split(string(buf), "\n")
-
-	for i := 0; i < len(peers); i++ {
-		log.Fatal("TODO: get peers' socket addresses")
+	l := len(peers) - 1 // -1 for empty string caused by last '\n'
+	for i := 0; i < l; i++ {
+		addrs, err := getPeerSocketAddrs(client, peers[i])
+		if err != nil {
+			log.Fatal("getPeerSocketAddrs:", err)
+		}
+		key, err := getPeerPublicKey(client, peers[i])
+		if err != nil {
+			log.Fatal("getPeerPublicKey:", err)
+		}
+		rootHash, err := getPeerRootHash(client, peers[i])
+		if err != nil {
+			log.Fatal("getPeerRootHash:f, err")
+		}
+		knownPeers[peers[i]] = newKnownPeer(addrs, key,	rootHash)
 	}
 }
 
@@ -97,12 +109,9 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	}
 
 	addrsAsStr := strings.Split(string(buf), "\n")
-	len := len(addrsAsStr)
-	if len > 1 {
-		len = len - 1; // because of empty string caused by last '\n' in Split
-	}
-	var addrs = make([]*net.UDPAddr, len)
-	for i := 0; i < len; i++ {
+	l := len(addrsAsStr) - 1 // for empty string caused by last '\n' in Split
+	var addrs = make([]*net.UDPAddr, l)
+	for i := 0; i < l; i++ {
 		addrs[i], err = net.ResolveUDPAddr("", addrsAsStr[i])
 		if err != nil {
 			return nil, err
@@ -117,10 +126,10 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 }
 
 // getPeerPublicKey returns the public key of the peer p. If this function
-// returns nil as err, it can mean two things: if the byte slice is not nil then
-// the peer is known and has announced a public key, if the byte slice is nil
-// then the peer is known but has not announced any public key yet. If an error
-// is encoutered during the process, err is not nil but the byte slice is.
+// returns nil as err, it can mean two things: the peer is known and has
+// announced a public key or it has not announced any public key yet.
+// If an error is encoutered during the process, err is not nil and the byte
+// slice is.
 func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 	if debug {
 		fmt.Println("Sending GET /peers/" + p + keyUrl)
@@ -141,13 +150,12 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println(len(buf))
 		return buf[:64], nil
 	case 204:
 		if debug {
 			fmt.Println("Received GET /peers/" + p + keyUrl + " 204")
 		}
-		return nil, nil
+		return make([]byte, 64), nil
 	case 404:
 		err = fmt.Errorf("Peer %q is unknown", p)
 		return nil, err
@@ -158,10 +166,9 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 }
 
 // getPeerRootHash returns the root hash of the peer p. If this function returns
-// nil as err, it can mean two things: if the byte slice is not nil then the
-// peer is known and has announced an root hash, if the byte slice is nil then
-// the peer is known but has not announced a root hash yet. If an error is
-// encoutered during the process, err is not nil but the byte slice is.
+// nil as err, it can mean two things: the peer is known and has announced a
+// root hash or the it has not announced a root hash yet. If an error is
+// encoutered during the process, err is not nil and the byte slice is.
 func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 	if debug {
 		fmt.Println("Sending GET /peers/" + p + rootHashUrl)
@@ -187,7 +194,7 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 		if debug {
 			fmt.Println("Received GET /peers/" + p + rootHashUrl + " 204")
 		}
-		return nil, nil
+		return make([]byte, 32), nil
 	case 404:
 		err = fmt.Errorf("Peer %q is unknown", p)
 		return nil, err
