@@ -2,23 +2,32 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-const serverUrl = "https://jch.irif.fr:8443"
+const serverUrl = "https://" + serverName + ":" + serverPort
+const serverName = "jch.irif.fr"
+const serverPort = "8443"
 const peersUrl = "/peers"
 const addressesUrl = "/addresses"
 const keyUrl = "/key"
 const rootHashUrl = "/root"
+const peerName = "Slartibartfast"
+const limitExpBackoff = 32
 
 var knownPeers = make(map[string]*knownPeer)
 var debug = true
+var id uint32 = 0
+var extensions uint32 = 0
 
 func main() {
 	transport := &*http.DefaultTransport.(*http.Transport)
@@ -35,6 +44,15 @@ func main() {
 			fmt.Println(k)
 			fmt.Println(v)
 		}
+	}
+
+	conn, err := net.ListenPacket("udp", "")
+	if err != nil {
+		log.Fatal("net.ListenPacket:", err)
+	}
+
+	if err = serverRegistration(&conn); err != nil {
+		log.Fatal("Could not register to server")
 	}
 }
 
@@ -214,4 +232,64 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 		err = fmt.Errorf("Server returned status code %d", resp.StatusCode)
 		return nil, err
 	}
+}
+
+func serverRegistration(conn *net.PacketConn) error {
+	var buf []byte
+	// idHello := id
+	buf = binary.BigEndian.AppendUint32(buf, id)
+	buf = append(buf, byte(2))
+	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
+	buf = binary.BigEndian.AppendUint32(buf, extensions)
+	buf = append(buf, peerName...)
+	// server := *knownPeers[serverName]
+	// addr := *(server.addrs[0])
+	log.Fatal("todo")
+	return nil
+}
+
+// Writes to the given socket the given data destined to the given address and
+// waits for a response (note that it could be any response, not necessarily the
+// one associated to the request just sent). The first write occurs immediatly,
+// then if needed 1 second later, and then doubles with every try, until it
+// reaches a limit value, at which point the data returned is nil and the error
+// is not. Otherwise, returns the packet received and nil as error.
+func writeExpBackoff(sock net.PacketConn, addr *net.UDPAddr,
+	data []byte) ([]byte, error) {
+	wait := 0
+	var buf []byte
+	buf = make([]byte, 7+65536+64+1) // + 1 for truncation check
+	for wait < limitExpBackoff {
+		time.Sleep(time.Duration(wait) * time.Second)
+		n, err := sock.WriteTo(data, addr)
+		if n != len(data) {
+			log.Fatal("Did not write request entirely")
+		}
+		if err != nil {
+			log.Fatal("WriteTo:", err)
+		}
+
+		err = sock.SetReadDeadline((time.Now()).Add(2 * time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+
+		n, _, err = sock.ReadFrom(buf)
+		if n == len(buf) {
+			log.Fatal("Peer packet exceeded maximum length")
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			}
+			if wait == 0 {
+				wait++
+			} else {
+				wait *= 2
+			}
+		} else {
+			return buf[:len(buf)-1], nil
+		}
+	}
+	return nil, fmt.Errorf("Exponential backoff limit exceeded")
 }
