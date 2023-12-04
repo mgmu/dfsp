@@ -13,25 +13,19 @@ type request struct {
 }
 
 func toBytes(rq *request) []byte {
-	/* TMP - to be changed when merged */
-	id := uint32(0)
-	name := "test"
+	// extensions in 'Hello' request
 	ext := uint32(0)
 	
 	idRq := make([]byte, 4)
-	binary.BigEndian.AppendUint32(idRq, id)
 	_, err := rand.Read(idRq)
 	if err != nil {
 		log.Fatal("rand.Read:", err)
 	}
 
-	nameRq := make([]byte, 0)
 	extRq := make([]byte, 0)
 	hashRq := make([]byte, 0)
 	if rq.typeRq == 2 {
-		nameRq = []byte(name)
-		extRq := make([]byte, 4)
-		binary.BigEndian.AppendUint32(extRq, ext)
+		extRq = binary.BigEndian.AppendUint32(extRq, ext)
 	}
 	if rq.typeRq == 132 {
 		hashRq = make([]byte, 32)
@@ -40,9 +34,9 @@ func toBytes(rq *request) []byte {
 		h.Write(rq.value)
 		hashRq = h.Sum(nil)
 	}
-	length := len(nameRq) + len(extRq) + len(rq.value) + len(hashRq)
+	length := len(extRq) + len(rq.value) + len(hashRq) 
 	res := make([]byte, 0)
-	lengthRq := make([]byte, 2)
+	lengthRq := make([]byte, 0)
 	lengthRq = binary.BigEndian.AppendUint16(lengthRq, uint16(length))
 	for i := range idRq {
 		res = append(res, idRq[i])
@@ -55,9 +49,6 @@ func toBytes(rq *request) []byte {
 		res = append(res, extRq[i])
 	}
 	// TODO: add extensions if needed
-	for i := range nameRq {
-		res = append(res, nameRq[i])
-	}
 	for i := range hashRq {
 		res = append(res, hashRq[i])
 	}
