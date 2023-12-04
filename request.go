@@ -24,7 +24,6 @@ func toBytes(rq *request) []byte {
 	if err != nil {
 		log.Fatal("rand.Read:", err)
 	}
-	length := len(idRq) + len(rq.value) + 1
 
 	nameRq := make([]byte, 0)
 	extRq := make([]byte, 0)
@@ -41,7 +40,7 @@ func toBytes(rq *request) []byte {
 		h.Write(rq.value)
 		hashRq = h.Sum(nil)
 	}
-	length += len(nameRq) + len(extRq) + len(rq.value) + len(hashRq)
+	length := len(nameRq) + len(extRq) + len(rq.value) + len(hashRq)
 	res := make([]byte, length)
 	lengthRq := make([]byte, 2)
 	binary.BigEndian.AppendUint16(lengthRq, uint16(length))
