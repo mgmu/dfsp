@@ -14,15 +14,17 @@ import (
 	"time"
 )
 
-const serverUrl = "https://" + serverName + ":" + serverPort
-const serverName = "jch.irif.fr"
-const serverPort = "8443"
-const peersUrl = "/peers"
-const addressesUrl = "/addresses"
-const keyUrl = "/key"
-const rootHashUrl = "/root"
-const peerName = "Slartibartfast"
-const limitExpBackoff = 32
+const (
+	serverUrl       = "https://" + serverName + ":" + serverPort
+	serverName      = "jch.irif.fr"
+	serverPort      = "8443"
+	peersUrl        = "/peers"
+	addressesUrl    = "/addresses"
+	keyUrl          = "/key"
+	rootHashUrl     = "/root"
+	peerName        = "Slartibartfast"
+	limitExpBackoff = 32
+)
 
 var knownPeers = make(map[string]*knownPeer)
 var debug = true
@@ -248,7 +250,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if err != nil {
 		return err
 	}
-	respId := uint32(bufr[0] << 24 | bufr[1] << 16 | bufr[2] << 8 | bufr[3])
+	respId := uint32(bufr[0]<<24 | bufr[1]<<16 | bufr[2]<<8 | bufr[3])
 	respType := bufr[4]
 	if respType != 129 {
 		return fmt.Errorf("TODO: not the right response")
@@ -312,7 +314,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 			}
 		} else {
 			length := (buf[5] << 8) | buf[6]
-			return buf[:7 + length], nil
+			return buf[:7+length], nil
 		}
 	}
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
