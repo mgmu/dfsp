@@ -246,7 +246,7 @@ func serverRegistration(conn net.PacketConn) error {
 	addr := server.addrs[0]
 	bufresp, err := writeExpBackoff(conn, addr, buf)
 	if err != nil {
-		log.Fatal("writeExpBackoff:", err)
+		return err
 	}
 	fmt.Println(bufresp)
 	// check same id
