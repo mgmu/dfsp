@@ -302,7 +302,8 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
-			return buf[:len(buf)-1], nil
+			length := (buf[5] << 8) | buf[6]
+			return buf[:7 + length], nil
 		}
 	}
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
