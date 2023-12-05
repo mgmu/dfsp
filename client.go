@@ -51,7 +51,7 @@ func main() {
 		log.Fatal("net.ListenPacket:", err)
 	}
 
-	if err = serverRegistration(&conn); err != nil {
+	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server")
 	}
 }
@@ -234,7 +234,7 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 	}
 }
 
-func serverRegistration(conn *net.PacketConn) error {
+func serverRegistration(conn net.PacketConn) error {
 	var buf []byte
 	// idHello := id
 	buf = binary.BigEndian.AppendUint32(buf, id)
@@ -242,9 +242,14 @@ func serverRegistration(conn *net.PacketConn) error {
 	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
-	// server := *knownPeers[serverName]
-	// addr := *(server.addrs[0])
-	log.Fatal("todo")
+	server := *knownPeers[serverName]
+	addr := server.addrs[0]
+	bufresp, err := writeExpBackoff(conn, addr, buf)
+	if err != nil {
+		log.Fatal("writeExpBackoff:", err)
+	}
+	fmt.Println(bufresp)
+	// check same id
 	return nil
 }
 
@@ -254,29 +259,38 @@ func serverRegistration(conn *net.PacketConn) error {
 // then if needed 1 second later, and then doubles with every try, until it
 // reaches a limit value, at which point the data returned is nil and the error
 // is not. Otherwise, returns the packet received and nil as error.
-func writeExpBackoff(sock net.PacketConn, addr *net.UDPAddr,
+func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	data []byte) ([]byte, error) {
 	wait := 0
 	var buf []byte
 	buf = make([]byte, 7+65536+64+1) // + 1 for truncation check
+	if debug {
+		fmt.Println("Write procedure with exponential backoff")
+	}
 	for wait < limitExpBackoff {
-		time.Sleep(time.Duration(wait) * time.Second)
-		n, err := sock.WriteTo(data, addr)
-		if n != len(data) {
-			log.Fatal("Did not write request entirely")
+		if debug {
+			fmt.Printf("wait time %d\n", wait)
 		}
+		time.Sleep(time.Duration(wait) * time.Second)
+		if debug {
+			fmt.Printf("Writing to %s\n", addr.String())
+		}
+		_, err := conn.WriteTo(data, addr)
 		if err != nil {
 			log.Fatal("WriteTo:", err)
 		}
 
-		err = sock.SetReadDeadline((time.Now()).Add(2 * time.Second))
+		err = conn.SetReadDeadline((time.Now()).Add(2 * time.Second))
 		if err != nil {
 			log.Fatal("SetReadDeadline:", err)
 		}
 
-		n, _, err = sock.ReadFrom(buf)
+		n, _, err := conn.ReadFrom(buf)
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
+		}
+		if debug {
+			fmt.Println("Stopped reading from socket")
 		}
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
