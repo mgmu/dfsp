@@ -236,7 +236,7 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 
 func serverRegistration(conn net.PacketConn) error {
 	var buf []byte
-	// idHello := id
+	idHello := id
 	buf = binary.BigEndian.AppendUint32(buf, id)
 	buf = append(buf, byte(2))
 	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
@@ -244,12 +244,21 @@ func serverRegistration(conn net.PacketConn) error {
 	buf = append(buf, peerName...)
 	server := *knownPeers[serverName]
 	addr := server.addrs[0]
-	bufresp, err := writeExpBackoff(conn, addr, buf)
+	bufr, err := writeExpBackoff(conn, addr, buf)
 	if err != nil {
 		return err
 	}
-	fmt.Println(bufresp)
-	// check same id
+	respId := uint32(bufr[0] << 24 | bufr[1] << 16 | bufr[2] << 8 | bufr[3])
+	respType := bufr[4]
+	if respType != 129 {
+		return fmt.Errorf("TODO: not the right response")
+	}
+	if respId != idHello {
+		return fmt.Errorf("Peer respond with id %d to request id %d", respId,
+			idHello)
+	}
+	server.handshakeMade = true
+	server.lastInteraction = time.Now()
 	return nil
 }
 
