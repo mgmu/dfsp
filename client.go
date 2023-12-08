@@ -247,6 +247,9 @@ func serverRegistration(conn net.PacketConn) error {
 	server := *knownPeers[serverName]
 	addr := server.addrs[0]
 	bufr, err := writeExpBackoff(conn, addr, buf)
+	if debug {
+		fmt.Printf("bufr = %v\n", bufr)
+	}
 	if err != nil {
 		return err
 	}
