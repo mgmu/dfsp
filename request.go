@@ -1,50 +1,59 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
-	"log"
-	"math/rand"
+)
+
+const (
+	NoOp = iota
+	Error
+	Hello
+	PublicKey
+	Root
+	GetDatum
+	NatTraversalRequest
+	NatTraversal
+	ErrorReply = 128
+	HelloReply = 129
+	PublicKeyReply = 130
+	RootReply = 131
+	Datum = 132
+	NoDatum = 133
 )
 
 type request struct {
 	typeRq uint8
+	id     uint32
 	value  []byte
 }
 
-func toBytes(rq *request) []byte {
-	// extensions in 'Hello' request
-	ext := uint32(0)
-
-	idRq := make([]byte, 4)
-	_, err := rand.Read(idRq)
-	if err != nil {
-		log.Fatal("rand.Read:", err)
-	}
-
-	var extRq []byte
-	var hashRq []byte
-	if rq.typeRq == 2 {
-		extRq = binary.BigEndian.AppendUint32(extRq, ext)
-	}
-	if rq.typeRq == 132 {
-		hashRq = make([]byte, 32)
-
-		h := sha256.New()
-		h.Write(rq.value)
-		hashRq = h.Sum(nil)
-	}
-	length := len(extRq) + len(rq.value) + len(hashRq)
-
+// Transforms this request into a ready-to-send slice of bytes and returns it.
+func (rq *request) Bytes() []byte {
 	var res []byte
-	lengthRq := make([]byte, 0)
-	lengthRq = binary.BigEndian.AppendUint16(lengthRq, uint16(length))
-	res = append(res, idRq...)
-	res = append(res, rq.typeRq)
-	res = append(res, lengthRq...)
-	res = append(res, extRq...)
-	// TODO: add extensions if needed
-	res = append(res, hashRq...)
+	res = binary.BigEndian.AppendUint32(res, rq.id)
+	res = append(res, byte(rq.typeRq))
+	res = binary.BigEndian.AppendUint16(res, rq.Length())
 	res = append(res, rq.value...)
 	return res
+}
+
+// Computes the length of this request as a number of bytes and returns it.
+// A length of 0 indicates that the type of the request is unknown.
+func (rq *request) Length() uint16 {
+	var length uint16 = 7
+	switch rq.typeRq {
+	case NoOp, Error, ErrorReply:
+		return length + uint16(len(rq.value))
+	case Hello, HelloReply:
+		return length + 4 + uint16(len(peerName)) // + signatures
+	case PublicKey, PublicKeyReply:
+		return length // + signatures
+	case Root, RootReply:
+		return length + 32 // + signatures
+	case GetDatum, Datum:
+		return length + 32
+	case NoDatum:
+		return length + 32 + uint16(len(rq.value))
+	}
+	return 0
 }
