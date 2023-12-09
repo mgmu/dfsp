@@ -245,7 +245,7 @@ func serverRegistration(conn net.PacketConn) error {
 	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
-	server := *knownPeers[serverName]
+	server := knownPeers[serverName]
 	addr := server.addrs[0]
 	bufr, err := writeExpBackoff(conn, addr, buf)
 	if debug {
@@ -279,7 +279,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if len(buf) < 7 {
 		log.Fatal("Server sent a packet too small")
 	}
-	idRq := uint32(buf[0]) << 24 | uint32(buf[1]) << 16 | uint32(buf[2]) << 8 |
+	idRq := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 |
 		uint32(buf[3])
 	fmt.Printf("idRq bytes: %v\n", buf[:4])
 	typeRq := uint8(buf[4])
@@ -290,13 +290,13 @@ func serverRegistration(conn net.PacketConn) error {
 		fmt.Printf("Content: %v\n", buf[7:7+lenRq])
 	}
 	if typeRq == 1 { // Error
-		log.Fatal(buf[7: 7+lenRq])
+		log.Fatal(buf[7 : 7+lenRq])
 	}
 	if typeRq != 3 { // PublicKey
 		return fmt.Errorf("TODO: not the expected request type: %d", typeRq)
 	}
 	server.handshakeMade = true
-	server.key = buf[7: 7+lenRq]
+	server.key = buf[7 : 7+lenRq]
 	server.lastInteraction = time.Now()
 	buf = make([]byte, 0)
 	buf = binary.BigEndian.AppendUint32(buf, idRq)
@@ -309,6 +309,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if debug {
 		fmt.Printf("bytes: %v\n", bufr)
 	}
+	fmt.Println(server)
 	return nil
 }
 
