@@ -54,7 +54,7 @@ func main() {
 	}
 
 	if err = serverRegistration(conn); err != nil {
-		log.Fatal("Could not register to server")
+		log.Fatal("Could not register to server:", err)
 	}
 }
 
@@ -238,13 +238,14 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 
 func serverRegistration(conn net.PacketConn) error {
 	var buf []byte
+	// Hello transfer
 	idHello := id
 	buf = binary.BigEndian.AppendUint32(buf, id)
 	buf = append(buf, byte(2))
 	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
-	server := *knownPeers[serverName]
+	server := knownPeers[serverName]
 	addr := server.addrs[0]
 	bufr, err := writeExpBackoff(conn, addr, buf)
 	if debug {
@@ -262,8 +263,53 @@ func serverRegistration(conn net.PacketConn) error {
 		return fmt.Errorf("Peer respond with id %d to request id %d", respId,
 			idHello)
 	}
+
+	// Key transfer
+	buf = make([]byte, 7+65536+64+1)
+	if debug {
+		fmt.Println("Waiting for PublicKey request...")
+	}
+	n, _, err := conn.ReadFrom(buf)
+	if n == len(buf) {
+		log.Fatal("Peer packet exceeded maximum length")
+	}
+	if err != nil {
+		return err
+	}
+	if len(buf) < 7 {
+		log.Fatal("Server sent a packet too small")
+	}
+	idRq := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 |
+		uint32(buf[3])
+	fmt.Printf("idRq bytes: %v\n", buf[:4])
+	typeRq := uint8(buf[4])
+	lenRq := uint16(buf[5]<<8 | buf[6])
+	if debug {
+		fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
+			lenRq, idRq)
+		fmt.Printf("Content: %v\n", buf[7:7+lenRq])
+	}
+	if typeRq == 1 { // Error
+		log.Fatal(buf[7 : 7+lenRq])
+	}
+	if typeRq != 3 { // PublicKey
+		return fmt.Errorf("TODO: not the expected request type: %d", typeRq)
+	}
 	server.handshakeMade = true
+	server.key = buf[7 : 7+lenRq]
 	server.lastInteraction = time.Now()
+	buf = make([]byte, 0)
+	buf = binary.BigEndian.AppendUint32(buf, idRq)
+	buf = append(buf, byte(130))
+	buf = append(buf, make([]byte, 2)...)
+	if debug {
+		fmt.Printf("Request to send: %v\n", buf)
+	}
+	bufr, err = writeExpBackoff(conn, addr, buf)
+	if debug {
+		fmt.Printf("bytes: %v\n", bufr)
+	}
+	fmt.Println(server)
 	return nil
 }
 
