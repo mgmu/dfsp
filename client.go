@@ -33,13 +33,14 @@ var id uint32 = 0
 var extensions uint32 = 0
 var root = ""
 
+var transport = &*http.DefaultTransport.(*http.Transport)
+var client = &http.Client{
+	Transport: transport,
+	Timeout:   50 * time.Second,
+}
+
 func main() {
-	transport := &*http.DefaultTransport.(*http.Transport)
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   50 * time.Second,
-	}
 
 	discoverPeers(client)
 	if debug {
@@ -317,54 +318,91 @@ func serverRegistration(conn net.PacketConn) error {
 	if err != nil {
 		return err
 	}
-	if len(bufr) < 7 {
-		log.Fatal("Server sent a packet too small")
-	}
-	idRq = uint32(bufr[0]) << 24 | uint32(bufr[1]) << 16 | uint32(bufr[2]) << 8 |
-		uint32(bufr[3])
-	typeRq = uint8(bufr[4])
-	lenRq = uint16(bufr[5]) << 8 | uint16(bufr[6])
-	if debug {
-		fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
-			lenRq, idRq)
-		fmt.Printf("idRq bytes: %v\n", buf[:4])
-		fmt.Printf("Content: %v\n", bufr[7:7+lenRq])
-	}
-	if typeRq == 1 {
-		log.Fatal(bufr[7 : 7 + lenRq])
-	}
-	if typeRq != 4 {
-		return fmt.Errorf("Expected type 4 but got %d", typeRq)
-	}
+	for true {
+		if len(bufr) < 7 {
+			log.Fatal("Server sent a packet too small")
+		}
+		idRq := uint32(bufr[0]) << 24 | uint32(bufr[1]) << 16 |
+			uint32(bufr[2]) << 8 | uint32(bufr[3])
+		typeRq := uint8(bufr[4])
+		lenRq := uint16(bufr[5]) << 8 | uint16(bufr[6])
+		if debug {
+			fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
+				lenRq, idRq)
+			fmt.Printf("idRq bytes: %v\n", bufr[:4])
+			fmt.Printf("Content: %v\n", bufr[7:7+lenRq])
+		}
+		if typeRq == 1 {
+			log.Fatal(bufr[7 : 7 + lenRq])
+		}
+		if typeRq != 4 {
+			return fmt.Errorf("Expected type 4 but got %d", typeRq)
+		}
 
-	server.handshakeMade = true
-	server.rootHash = bufr[7 : 7 + lenRq]
-	server.lastInteraction = time.Now()
+		server.handshakeMade = true
+		server.rootHash = bufr[7 : 7 + lenRq]
+		server.lastInteraction = time.Now()
 
-	rootHash := make([]byte, 32)
-	h := sha256.New()
-	h.Write([]byte(root))
-	rootHash = h.Sum(nil)
-	requestRoot := &request{
-		typeRq: uint8(131),
-		value: rootHash,
-	}
-	rq := toBytes(requestRoot)
-	// id must be equals, should be changed when the struct will be able to store
-	// the id of the request
-	rq[0] = buf[0]
-	rq[1] = buf[1]
-	rq[2] = buf[2]
-	rq[3] = buf[3]
-	if debug {
-		fmt.Printf("Request to send: %v\n", rq)
-	}
-	bufr, err = writeExpBackoff(conn, addr, rq)
-	if err != nil {
-		return err
-	}
-	if debug {
-		fmt.Printf("bufr = %v\n", bufr)
+		rootHash := make([]byte, 32)
+		h := sha256.New()
+		h.Write([]byte(root))
+		rootHash = h.Sum(nil)
+		requestRoot := &request{
+			typeRq: uint8(131),
+			value: rootHash,
+		}
+		rq := toBytes(requestRoot)
+		// id must be equals, should be changed when the struct will be able to
+		// store the id of the request
+		rq[0] = bufr[0]
+		rq[1] = bufr[1]
+		rq[2] = bufr[2]
+		rq[3] = bufr[3]
+		if debug {
+			fmt.Printf("Request to send: %v\n", rq)
+		}
+		_, err := conn.WriteTo(rq, addr)
+		if err != nil {
+			log.Fatal("WriteTo:", err)
+		}
+
+		err = conn.SetReadDeadline((time.Now()).Add(2 * time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+
+		bufr = make([]byte, 7 + 65536 + 64 + 1)
+		n, _, err := conn.ReadFrom(bufr)
+		if n == len(buf) {
+			log.Fatal("Peer packet exceeded maximum length")
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			} else {
+				if debug {
+					fmt.Println("Deadline exceeded")
+				}
+
+				resp, err := client.Get(serverUrl + peersUrl + "/" + peerName +
+					rootHashUrl)
+				if err != nil {
+					log.Fatal("Get:", err)
+				}
+			
+				if resp.StatusCode == 200 {
+					fmt.Println("Root hash transfer done")
+					break
+				} else if resp.StatusCode == 404 {
+					if debug {
+						log.Fatal("Error during RootReply, must redo announce")
+					}
+				}
+			}
+		}
+		if debug {
+			fmt.Println("Resending RootReply...")
+		}
 	}
 
 	return nil
