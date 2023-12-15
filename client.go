@@ -318,7 +318,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if err != nil {
 		return err
 	}
-	for true {
+	for {
 		if len(bufr) < 7 {
 			log.Fatal("Server sent a packet too small")
 		}
@@ -395,7 +395,7 @@ func serverRegistration(conn net.PacketConn) error {
 					break
 				} else if resp.StatusCode == 404 {
 					if debug {
-						log.Fatal("Error during RootReply, must redo announce")
+						log.Fatal("Error during RootReply: unknown peer")
 					}
 				}
 			}
