@@ -111,6 +111,7 @@ func discoverPeers(client *http.Client) {
 // corresponding error.
 func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	if debug {
+		fmt.Println("Fetching peer socket addresses")
 		fmt.Println("Sending GET /peers/" + p + addressesUrl)
 	}
 
@@ -240,37 +241,52 @@ func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 }
 
 func serverRegistration(conn net.PacketConn) error {
+	if debug {
+		fmt.Println("Registering to server...")
+	}
 	var buf []byte
 	// Hello transfer
-	idHello := id
-	buf = binary.BigEndian.AppendUint32(buf, id)
-	buf = append(buf, byte(2))
-	buf = binary.BigEndian.AppendUint16(buf, uint16(4+len(peerName)))
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
+	idHello := id
+	id++
+	helloRq := packet{
+		typeRq: uint8(Hello),
+		id:     idHello,
+		body:   buf,
+	}
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
-	bufr, err := writeExpBackoff(conn, addr, buf)
 	if debug {
-		fmt.Printf("bufr = %v\n", bufr)
+		fmt.Println("Sending Hello request...")
+	}
+	bufr, err := writeExpBackoff(conn, addr, helloRq.Bytes())
+	if debug {
+		fmt.Printf("Server response to hello request = %v\n", bufr)
 	}
 	if err != nil {
 		return err
 	}
-	respId := uint32(bufr[0]<<24 | bufr[1]<<16 | bufr[2]<<8 | bufr[3])
+	respId := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
+		uint32(bufr[3])
 	respType := bufr[4]
-	if respType != 129 {
-		return fmt.Errorf("TODO: not the right response")
+	respLen := uint16(bufr[5]<<8) | uint16(bufr[6])
+	if respType == ErrorReply {
+		fmt.Println("Error reply")
+		log.Fatal(string(bufr[7 : 7+respLen]))
 	}
-	if respId != idHello {
-		return fmt.Errorf("Peer respond with id %d to request id %d", respId,
-			idHello)
+	if respType != HelloReply {
+		return fmt.Errorf("not the right response to hello rq %d", respType)
+	}
+	if respId != helloRq.id {
+		return fmt.Errorf("Peer respond with id %d to packet id %d", respId,
+			helloRq.id)
 	}
 
 	// Key transfer
 	buf = make([]byte, 7+65536+64+1)
 	if debug {
-		fmt.Println("Waiting for PublicKey request...")
+		fmt.Println("Waiting for PublicKey packet...")
 	}
 	n, _, err := conn.ReadFrom(buf)
 	if n == len(buf) {
@@ -282,86 +298,91 @@ func serverRegistration(conn net.PacketConn) error {
 	if len(buf) < 7 {
 		log.Fatal("Server sent a packet too small")
 	}
-	idRq := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 |
-		uint32(buf[3])
-	fmt.Printf("idRq bytes: %v\n", buf[:4])
+	idPublicKeyPacket := uint32(buf[0])<<24 | uint32(buf[1])<<16 |
+		uint32(buf[2])<<8 | uint32(buf[3])
 	typeRq := uint8(buf[4])
-	lenRq := uint16(buf[5]<<8 | buf[6])
+	lenRq := uint16(buf[5])<<8 | uint16(buf[6])
 	if debug {
-		fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
-			lenRq, idRq)
+		fmt.Printf("Received type %d of length %d with id %d\n", typeRq,
+			lenRq, idPublicKeyPacket)
 		fmt.Printf("Content: %v\n", buf[7:7+lenRq])
 	}
-	if typeRq == 1 { // Error
+	if typeRq == ErrorReply {
 		log.Fatal(buf[7 : 7+lenRq])
 	}
-	if typeRq != 3 { // PublicKey
-		return fmt.Errorf("TODO: not the expected request type: %d", typeRq)
+	if typeRq != PublicKey {
+		return fmt.Errorf("TODO: not the expected packet type: %d", typeRq)
 	}
 	server.handshakeMade = true
 	server.key = buf[7 : 7+lenRq]
 	server.lastInteraction = time.Now()
-	buf = make([]byte, 0)
-	buf = binary.BigEndian.AppendUint32(buf, idRq)
-	buf = append(buf, byte(130))
-	buf = append(buf, make([]byte, 2)...)
-	if debug {
-		fmt.Printf("Request to send: %v\n", buf)
+	publicKeyReplyPacket := packet{
+		typeRq: uint8(PublicKeyReply),
+		id:     idPublicKeyPacket,
+		body:   make([]byte, 0),
 	}
-	bufr, err = writeExpBackoff(conn, addr, buf)
 	if debug {
-		fmt.Printf("bytes: %v\n", bufr)
+		fmt.Printf("Packet to send: %v\n", publicKeyReplyPacket.Bytes())
 	}
-	fmt.Println(server)
+	for typeRq != Root && typeRq == PublicKey {
+		bufr, err = writeExpBackoff(conn, addr, publicKeyReplyPacket.Bytes())
+		typeRq = uint8(bufr[4])
+		publicKeyReplyPacket.id = uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
+			uint32(bufr[2])<<8 | uint32(bufr[3])
+		if debug {
+			fmt.Printf("bytes received after publicKeyReplyPacket: %v\n", bufr)
+			fmt.Printf("new id of reply: %d\n", publicKeyReplyPacket.id)
+			fmt.Printf("Packet to send: %v\n", publicKeyReplyPacket.Bytes())
+		}
+		if err != nil {
+			return err
+		}
+		if typeRq == Error || typeRq == ErrorReply {
+			fmt.Println("Server indicates error")
+			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8|uint16(bufr[6])]))
+		}
+	}
 
 	// Root hash transfer
-	if err != nil {
-		return err
-	}
 	for {
+		if debug {
+			fmt.Println("Waiting for Root Hash transfer")
+		}
 		if len(bufr) < 7 {
 			log.Fatal("Server sent a packet too small")
 		}
-		idRq := uint32(bufr[0]) << 24 | uint32(bufr[1]) << 16 |
-			uint32(bufr[2]) << 8 | uint32(bufr[3])
+		idRq := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
+			uint32(bufr[3])
 		typeRq := uint8(bufr[4])
-		lenRq := uint16(bufr[5]) << 8 | uint16(bufr[6])
+		lenRq := uint16(bufr[5])<<8 | uint16(bufr[6])
 		if debug {
 			fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
 				lenRq, idRq)
 			fmt.Printf("idRq bytes: %v\n", bufr[:4])
-			fmt.Printf("Content: %v\n", bufr[7:7+lenRq])
 		}
-		if typeRq == 1 {
-			log.Fatal(bufr[7 : 7 + lenRq])
+		if typeRq == ErrorReply {
+			log.Fatal(bufr[7 : 7+lenRq])
 		}
-		if typeRq != 4 {
+		if typeRq != Root {
 			return fmt.Errorf("Expected type 4 but got %d", typeRq)
 		}
-
-		server.handshakeMade = true
-		server.rootHash = bufr[7 : 7 + lenRq]
+		server.rootHash = bufr[7 : 7+lenRq]
 		server.lastInteraction = time.Now()
 
 		rootHash := make([]byte, 32)
 		h := sha256.New()
 		h.Write([]byte(root))
 		rootHash = h.Sum(nil)
-		requestRoot := &request{
-			typeRq: uint8(131),
-			value: rootHash,
+		packetRoot := packet{
+			typeRq: uint8(RootReply),
+			id: uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
+				uint32(bufr[3]),
+			body: rootHash,
 		}
-		rq := toBytes(requestRoot)
-		// id must be equals, should be changed when the struct will be able to
-		// store the id of the request
-		rq[0] = bufr[0]
-		rq[1] = bufr[1]
-		rq[2] = bufr[2]
-		rq[3] = bufr[3]
 		if debug {
-			fmt.Printf("Request to send: %v\n", rq)
+			fmt.Printf("Packet to send: %v\n", packetRoot.Bytes())
 		}
-		_, err := conn.WriteTo(rq, addr)
+		_, err := conn.WriteTo(packetRoot.Bytes(), addr)
 		if err != nil {
 			log.Fatal("WriteTo:", err)
 		}
@@ -371,7 +392,7 @@ func serverRegistration(conn net.PacketConn) error {
 			log.Fatal("SetReadDeadline:", err)
 		}
 
-		bufr = make([]byte, 7 + 65536 + 64 + 1)
+		bufr = make([]byte, 7+65536+64+1)
 		n, _, err := conn.ReadFrom(bufr)
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
@@ -389,7 +410,7 @@ func serverRegistration(conn net.PacketConn) error {
 				if err != nil {
 					log.Fatal("Get:", err)
 				}
-			
+
 				if resp.StatusCode == 200 {
 					fmt.Println("Root hash transfer done")
 					break
@@ -404,13 +425,15 @@ func serverRegistration(conn net.PacketConn) error {
 			fmt.Println("Resending RootReply...")
 		}
 	}
-
+	if debug {
+		fmt.Println("Registered to server")
+	}
 	return nil
 }
 
 // Writes to the given socket the given data destined to the given address and
 // waits for a response (note that it could be any response, not necessarily the
-// one associated to the request just sent). The first write occurs immediatly,
+// one associated to the packet just sent). The first write occurs immediatly,
 // then if needed 1 second later, and then doubles with every try, until it
 // reaches a limit value, at which point the data returned is nil and the error
 // is not. Otherwise, returns the packet received and nil as error.
@@ -419,17 +442,17 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	wait := 0
 	var buf []byte
 	buf = make([]byte, 7+65536+64+1) // + 1 for truncation check
-	if debug {
-		fmt.Println("Write procedure with exponential backoff")
-	}
+	// if debug {
+	// 	fmt.Println("Write procedure with exponential backoff")
+	// }
 	for wait < limitExpBackoff {
-		if debug {
-			fmt.Printf("wait time %d\n", wait)
-		}
+		// if debug {
+		// 	fmt.Printf("wait time %d\n", wait)
+		// }
 		time.Sleep(time.Duration(wait) * time.Second)
-		if debug {
-			fmt.Printf("Writing to %s\n", addr.String())
-		}
+		// if debug {
+		// 	fmt.Printf("Writing to %s\n", addr.String())
+		// }
 		_, err := conn.WriteTo(data, addr)
 		if err != nil {
 			log.Fatal("WriteTo:", err)
@@ -444,9 +467,9 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
 		}
-		if debug {
-			fmt.Println("Stopped reading from socket")
-		}
+		// if debug {
+		// 	fmt.Println("Stopped reading from socket")
+		// }
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
 				log.Fatal("ReadFrom:", err)
