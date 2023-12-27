@@ -30,7 +30,10 @@ const (
 
 var knownPeers = make(map[string]*knownPeer)
 var debug = true
-var id uint32 = 0
+var (
+	id uint32 = 0
+	idLock sync.Mutex
+)
 var extensions uint32 = 0
 var root = ""
 
@@ -271,8 +274,16 @@ func serverRegistration(conn net.PacketConn) error {
 	// Hello transfer
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
+	idLock.Lock()
+	if debug {
+		fmt.Println("Locked id")
+	}
 	idHello := id
 	id++
+	idLock.Unlock()
+	if debug {
+		fmt.Println("Unlocked id")
+	}
 	helloRq := packet{
 		typeRq: uint8(Hello),
 		id:     idHello,
@@ -462,8 +473,16 @@ func sendKeepalive(client *http.Client, conn net.PacketConn) error {
 	var buf []byte
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
+	idLock.Lock()
+	if debug {
+		fmt.Println("Locked id")
+	}
 	idKeepalive := id
 	id++
+	idLock.Unlock()
+	if debug {
+		fmt.Println("Unlocked id")
+	}
 	keepaliveRq := packet{
 		typeRq: uint8(Hello),
 		id:     idKeepalive,
