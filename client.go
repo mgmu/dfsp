@@ -35,7 +35,7 @@ var (
 	id         uint32 = 0
 	idLock     sync.Mutex
 	extensions uint32 = 0
-	root              = ""
+	root *node = nil
 	transport         = &*http.DefaultTransport.(*http.Transport)
 	client            = &http.Client{
 		Transport: transport,
@@ -44,6 +44,19 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 2 {
+		fmt.Printf("Usage: %s [path]\n", os.Args[0])
+		return
+	}
+
+	if len(os.Args) == 2 {
+		tmp, err := from(os.Args[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		root = tmp
+	}
+
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	discoverPeers(client)
@@ -152,7 +165,7 @@ func discoverPeers(client *http.Client) {
 // corresponding error.
 func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 	if debug {
-		fmt.Println("Fetching peer socket addresses")
+		fmt.Println("Getting peer socket addresses...")
 		fmt.Println("Sending GET /peers/" + p + addressesUrl)
 	}
 
@@ -209,7 +222,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 // slice is.
 func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 	if debug {
-		fmt.Println("Sending GET /peers/" + p + keyUrl)
+		fmt.Println("Getting " + p + keyUrl + " public key...")
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + keyUrl)
@@ -248,7 +261,7 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 // encoutered during the process, err is not nil and the byte slice is.
 func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
 	if debug {
-		fmt.Println("Sending GET /peers/" + p + rootHashUrl)
+		fmt.Println("Getting " + p + rootHashUrl + " root hash...")
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl + "/" + p + rootHashUrl)
@@ -320,9 +333,16 @@ func serverRegistration(conn net.PacketConn) error {
 		uint32(bufr[3])
 	respType := bufr[4]
 	respLen := uint16(bufr[5]<<8) | uint16(bufr[6])
+	if respType == NoOp {
+		log.Fatal("Server sent NoOp and we don't know what to do")
+	}
 	if respType == ErrorReply {
 		fmt.Println("Error reply")
 		log.Fatal(string(bufr[7 : 7+respLen]))
+	}
+	if respType == Error {
+		fmt.Println("Error reply")
+		log.Fatal(string(buf[7 : 7+respLen]))
 	}
 	if respType != HelloReply {
 		return fmt.Errorf("not the right response to hello rq %d", respType)
@@ -418,15 +438,17 @@ func serverRegistration(conn net.PacketConn) error {
 		server.rootHash = bufr[7 : 7+lenRq]
 		server.lastInteraction = time.Now()
 
-		rootHash := make([]byte, 32)
-		h := sha256.New()
-		h.Write([]byte(root))
-		rootHash = h.Sum(nil)
+		var rootHash [32]byte
+		if root == nil {
+			rootHash = sha256.Sum256([]byte(""))
+		} else {
+			rootHash = root.hash
+		}
 		packetRoot := packet{
 			typeRq: uint8(RootReply),
 			id: uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
 				uint32(bufr[3]),
-			body: rootHash,
+			body: rootHash[0:32],
 		}
 		if debug {
 			fmt.Printf("Packet to send: %v\n", packetRoot.Bytes())
@@ -603,3 +625,4 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	}
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
 }
+
