@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,6 +41,8 @@ var client = &http.Client{
 }
 
 func main() {
+	var wg sync.WaitGroup
+
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	discoverPeers(client)
@@ -59,6 +62,26 @@ func main() {
 	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server: ", err)
 	}
+
+	// send keepalive periodically
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			time.Sleep(30 * time.Second)
+			if errKeepalive := sendKeepalive(client, conn);
+				errKeepalive != nil {
+				if debug {
+					fmt.Println("Error in keepalive, registering again...")
+				}
+				if err = serverRegistration(conn); err != nil {
+					log.Fatal("Could not register to server: ", err)
+				}
+			}
+		}
+	}()
+
+	wg.Wait()
 }
 
 func discoverPeers(client *http.Client) {
@@ -427,6 +450,66 @@ func serverRegistration(conn net.PacketConn) error {
 	}
 	if debug {
 		fmt.Println("Registered to server")
+	}
+	return nil
+}
+
+// sendKeepalive sends hello requests to the server to keep the registration
+// alive. It should be called periodically. Errors are handled differently than
+// in serverRegistration: if an error is encountered, the function simply checks
+// if the registration is still alive, and if it is not, it returns an error.
+func sendKeepalive(client *http.Client, conn net.PacketConn) error {
+	var buf []byte
+	buf = binary.BigEndian.AppendUint32(buf, extensions)
+	buf = append(buf, peerName...)
+	idKeepalive := id
+	id++
+	keepaliveRq := packet{
+		typeRq: uint8(Hello),
+		id:     idKeepalive,
+		body:   buf,
+	}
+	server := knownPeers[serverName]
+	addr := server.addrs[0]
+	if debug {
+		fmt.Println("Sending keepalive...")
+	}
+	bufr, err := writeExpBackoff(conn, addr, keepaliveRq.Bytes())
+	if debug {
+		fmt.Printf("Server response to keepalive = %v\n", bufr)
+	}
+	if err != nil {
+		if debug {
+			fmt.Println("Error in keepalive sending, checking registration")
+		}
+		_, err := getPeerSocketAddrs(client, peerName)
+		if err != nil {
+			return err
+		} else if debug {
+			fmt.Println("Client is still registered")
+		}
+	}
+	respId := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
+		uint32(bufr[2])<<8 | uint32(bufr[3])
+	respType := bufr[4]
+	if respType == ErrorReply ||
+	respType != HelloReply ||
+	respId != keepaliveRq.id {
+		if debug {
+			fmt.Println("Error in response, checking registration...")
+		}
+		_, err := getPeerSocketAddrs(client, peerName)
+		if err != nil {
+			return err
+		} else if debug {
+			fmt.Println("Client is still registered")
+		}
+	} else {
+		server.lastInteraction = time.Now()
+		if debug {
+			fmt.Printf("Last interaction with server: %v\n",
+				server.lastInteraction)
+		}
 	}
 	return nil
 }
