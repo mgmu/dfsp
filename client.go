@@ -603,9 +603,3 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	}
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
 }
-
-func check(e error) {
-	if e != nil {
-		log.Fatal(e)
-	}
-}
