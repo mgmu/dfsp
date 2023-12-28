@@ -28,20 +28,19 @@ const (
 	limitExpBackoff = 32
 )
 
-var knownPeers = make(map[string]*knownPeer)
-var debug = true
 var (
-	id uint32 = 0
-	idLock sync.Mutex
+	knownPeers        = make(map[string]*knownPeer)
+	debug             = true
+	id         uint32 = 0
+	idLock     sync.Mutex
+	extensions uint32 = 0
+	root              = ""
+	transport         = &*http.DefaultTransport.(*http.Transport)
+	client            = &http.Client{
+		Transport: transport,
+		Timeout:   50 * time.Second,
+	}
 )
-var extensions uint32 = 0
-var root = ""
-
-var transport = &*http.DefaultTransport.(*http.Transport)
-var client = &http.Client{
-	Transport: transport,
-	Timeout:   50 * time.Second,
-}
 
 func main() {
 	var wg sync.WaitGroup
@@ -72,8 +71,8 @@ func main() {
 		defer wg.Done()
 		for {
 			time.Sleep(30 * time.Second)
-			if errKeepalive := sendKeepalive(client, conn);
-				errKeepalive != nil {
+			errKeepalive := sendKeepalive(client, conn)
+			if errKeepalive != nil {
 				if debug {
 					fmt.Println("Error in keepalive, registering again...")
 				}
@@ -83,7 +82,6 @@ func main() {
 			}
 		}
 	}()
-
 	wg.Wait()
 }
 
@@ -512,8 +510,8 @@ func sendKeepalive(client *http.Client, conn net.PacketConn) error {
 		uint32(bufr[2])<<8 | uint32(bufr[3])
 	respType := bufr[4]
 	if respType == ErrorReply ||
-	respType != HelloReply ||
-	respId != keepaliveRq.id {
+		respType != HelloReply ||
+		respId != keepaliveRq.id {
 		if debug {
 			fmt.Println("Error in response, checking registration...")
 		}
