@@ -74,7 +74,6 @@ func main() {
 			}
 		}
 	}()
-	wg.Wait()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Enter 'p' for peers display, 'd' for downloading a file:")
