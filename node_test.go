@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"log"
 	"os"
 	"testing"
 )
@@ -15,7 +16,9 @@ func TestNodeFromUnexistingFileReturnsError(t *testing.T) {
 
 func TestNodeFromEmptyRegularFileDoesNotReturnsError(t *testing.T) {
 	f, err := os.CreateTemp("", "test")
-	check(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	_, err = from(f.Name())
 	if err != nil {
