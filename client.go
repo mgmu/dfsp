@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bufio"
 )
 
 const (
@@ -43,19 +44,9 @@ var (
 )
 
 func main() {
-	var wg sync.WaitGroup
-
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	discoverPeers(client)
-	if debug {
-		fmt.Println("Known peers:")
-		for k, v := range knownPeers {
-			fmt.Println(k)
-			fmt.Println(v)
-		}
-	}
-
 	conn, err := net.ListenPacket("udp", "")
 	if err != nil {
 		log.Fatal("net.ListenPacket:", err)
@@ -66,6 +57,7 @@ func main() {
 	}
 
 	// send keepalive periodically
+	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -82,12 +74,37 @@ func main() {
 			}
 		}
 	}()
-	wg.Wait()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println("Enter 'p' for peers display, 'd' for downloading a file:")
+	for scanner.Scan() {
+		input := scanner.Text()
+		if len(input) != 1 {
+			fmt.Println("Try again.")
+		} else {
+			switch input {
+			case "d":
+				log.Fatal("todo")
+			case "p":
+				for k, v := range knownPeers {
+					fmt.Println(k)
+					fmt.Println(v)
+				}
+			default:
+				fmt.Println("Try again.")
+			}
+		}
+		fmt.Println("Enter 'p' for peers display, 'd' for downloading a file:")
+	}
+	if err = scanner.Err(); err != nil {
+		log.Fatal("Reading stdin:", err)
+	}
+	fmt.Println("Exiting...")
 }
 
 func discoverPeers(client *http.Client) {
 	if debug {
-		fmt.Println("Sending GET peers")
+		fmt.Println("Discovering peers...")
 	}
 
 	resp, err := client.Get(serverUrl + peersUrl)
