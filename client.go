@@ -116,7 +116,27 @@ func main() {
 		} else {
 			switch input {
 			case "d":
-				log.Fatal("todo")
+				fmt.Println("Enter peer name & hash (no hash provided => rootHash):")
+				scanner.Scan()
+				input := strings.Split(scanner.Text(), " ")
+				peer := input[0]
+				if knownPeers[peer] == nil {
+					fmt.Println("Unknown peer.")
+				} else {
+					hashString := ""
+					if len(input) > 1 {
+						hashString = input[1]
+					} 
+					hash := []byte(hashString)
+					if hashString == "" {
+						hash = knownPeers[peer].rootHash
+					}
+					if len(hash) == 32 {
+						getDatum(peer, hash, conn)
+					} else {
+						fmt.Println("Error: hash must be 32 bytes long.")
+					}
+				}
 			case "p":
 				knownPeersLock.Lock()
 				for k, v := range knownPeers {
