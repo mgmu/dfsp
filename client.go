@@ -300,6 +300,7 @@ func serverRegistration(conn net.PacketConn) error {
 		fmt.Println("Registering to server...")
 	}
 	var buf []byte
+
 	// Hello transfer
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
@@ -320,6 +321,7 @@ func serverRegistration(conn net.PacketConn) error {
 	}
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
+
 	if debug {
 		fmt.Println("Sending Hello request...")
 	}
@@ -384,6 +386,7 @@ func serverRegistration(conn net.PacketConn) error {
 	server.handshakeMade = true
 	server.key = buf[7 : 7+lenRq]
 	server.lastInteraction = time.Now()
+
 	publicKeyReplyPacket := packet{
 		typeRq: uint8(PublicKeyReply),
 		id:     idPublicKeyPacket,
@@ -577,17 +580,8 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	wait := 0
 	var buf []byte
 	buf = make([]byte, 7+65536+64+1) // + 1 for truncation check
-	// if debug {
-	// 	fmt.Println("Write procedure with exponential backoff")
-	// }
 	for wait < limitExpBackoff {
-		// if debug {
-		// 	fmt.Printf("wait time %d\n", wait)
-		// }
 		time.Sleep(time.Duration(wait) * time.Second)
-		// if debug {
-		// 	fmt.Printf("Writing to %s\n", addr.String())
-		// }
 		_, err := conn.WriteTo(data, addr)
 		if err != nil {
 			log.Fatal("WriteTo:", err)
@@ -602,9 +596,6 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
 		}
-		// if debug {
-		// 	fmt.Println("Stopped reading from socket")
-		// }
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
 				log.Fatal("ReadFrom:", err)
@@ -632,4 +623,14 @@ func toId(bytes []byte) (uint32, error) {
 	}
 	return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 | uint32(bytes[2])<<8 |
 		uint32(bytes[3]), nil
+}
+
+// Returns true if at least one of the known peers has the given UDP address
+func isKnownPeer(addr *net.UDPAddr) bool {
+	for _, peer := range knownPeers {
+		if peer.has(addr) {
+			return true
+		}
+	}
+	return false
 }
