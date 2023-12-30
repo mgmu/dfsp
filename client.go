@@ -625,12 +625,41 @@ func toId(bytes []byte) (uint32, error) {
 		uint32(bytes[3]), nil
 }
 
-// Returns true if at least one of the known peers has the given UDP address
-func isKnownPeer(addr *net.UDPAddr) bool {
+// Returns true if at least one of the known peers has the given UDP address. If
+// the given address is nil, returns an error.
+func isKnownPeer(addr *net.UDPAddr) (bool, error) {
+	if addr == nil {
+		return false, fmt.Errorf("isKnownPeer: nil address")
+	}
 	for _, peer := range knownPeers {
 		if peer.has(addr) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
+}
+
+// Updates the interaction time by setting it to time.Now() to all the known
+// peers that have the given UDP address. If none has it, returns an error.
+func updateInteractionTime(addr *net.UDPAddr) error {
+	fname := "updateInteractionTime"
+	if addr == nil {
+		return fmt.Errorf(fname + ": nil address")
+	}
+	known, err := isKnownPeer(addr)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf(fname + ": unknown peer")
+	}
+	for name, peer := range knownPeers {
+		if peer.has(addr) {
+			if debug {
+				fmt.Println("Updating interaction time of peer " + name)
+			}
+			peer.lastInteraction = time.Now()
+		}
+	}
+	return nil
 }
