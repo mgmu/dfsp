@@ -663,3 +663,128 @@ func updateInteractionTime(addr *net.UDPAddr) error {
 	}
 	return nil
 }
+
+// handleRequest receives a buffer, an address and a connection and sends a
+// response, if needed, to the emitter of the received request.
+func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
+	fname := "handleRequest"
+	if addr == nil {
+		return fmt.Errorf(fname + ": addr is nil")
+	}
+	if len(buf) < 7 {
+		return fmt.Errorf(fname + ": packet received too small")
+	}
+	id := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 |
+		uint32(buf[3])
+	l := uint16(buf[5])<<8 | uint16(buf[6])
+	switch buf[4] {
+	case Error, ErrorReply:
+		log.Fatal("handleRequest:", buf[7:7+l])
+	case Hello:
+		if debug {
+			fmt.Println("Handling Hello request")
+		}
+		body := make([]byte, 4 + len(peerName))
+		body = binary.BigEndian.AppendUint32(body, extensions)
+		body = append(body, peerName...)
+		resp := packet{HelloReply, id, body}
+		_, err := conn.WriteTo(resp.Bytes(), addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		known, err := isKnownPeer(addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if known {
+			if err = updateInteractionTime(addr); err != nil {
+				log.Fatal(fname, err)
+			}
+		}
+		if debug {
+			fmt.Println("Sent HelloReply response")
+		}
+		// what to do if host is unknown ?
+		return nil
+	case PublicKey:
+		if debug {
+			fmt.Println("Handling PublicKey request")
+		}
+		known, err := isKnownPeer(addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if !known {
+			return nil
+		}
+		resp := packet{
+			typeRq: PublicKeyReply,
+			id: id,
+		}
+		_, err = conn.WriteTo(resp.Bytes(), addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if err = updateInteractionTime(addr); err != nil {
+			log.Fatal(fname, err)
+		}
+		if debug {
+			fmt.Println("Sent PublicKeyReply response")
+		}
+		return nil
+	case Root:
+		if debug {
+			fmt.Println("Handling Root request")
+		}
+		known, err := isKnownPeer(addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if !known {
+			return nil
+		}
+		var rootHash []byte
+		if root == nil {
+			tmp := sha256.Sum256([]byte(""))
+			rootHash = tmp[0:32]
+		} else {
+			rootHash = root.hash[0:32]
+		}
+		resp := packet{RootReply, id, rootHash}
+		_, err = conn.WriteTo(resp.Bytes(), addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if debug {
+			fmt.Println("Sent RootReply response")
+		}
+		return nil
+	case GetDatum:
+		if debug {
+			fmt.Println("Handling GetDatum request")
+		}
+		known, err := isKnownPeer(addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if !known {
+			return nil
+		}
+		hash := buf[7:7+l]
+		resp := packet{NoDatum, id, hash}
+		_, err = conn.WriteTo(resp.Bytes(), addr)
+		if err != nil {
+			log.Fatal(fname, err)
+		}
+		if debug {
+			fmt.Println("Sent NoDatum response")
+		}
+		return nil
+	default:
+		return nil
+	}
+	if debug {
+		fmt.Println(fname + ": Received packet of unknown type")
+	}
+	return nil
+}
