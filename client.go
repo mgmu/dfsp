@@ -116,7 +116,7 @@ func main() {
 		} else {
 			switch input {
 			case "d":
-				fmt.Println("Enter peer name & hash (no hash provided => rootHash):")
+				fmt.Println("Enter peer name & optionally hash:")
 				scanner.Scan()
 				input := strings.Split(scanner.Text(), " ")
 				peer := input[0]
@@ -132,7 +132,10 @@ func main() {
 						hash = knownPeers[peer].rootHash
 					}
 					if len(hash) == 32 {
-						getDatum(peer, hash, conn)
+						_, err := getDatum(peer, hash, conn, "")
+						if err != nil {
+							fmt.Println(err)
+						} 
 					} else {
 						fmt.Println("Error: hash must be 32 bytes long.")
 					}
