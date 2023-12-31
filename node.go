@@ -92,7 +92,7 @@ func from(name string) (*node, error) {
 			}
 			new := &node{
 				category: BigFile,
-				hash: hashFrom(childs),
+				hash: hashFrom(childs, BigFile),
 				children: childs,
 				name: name,
 			}
@@ -154,7 +154,7 @@ func from(name string) (*node, error) {
 		}
 		new := &node{
 			category: Directory,
-			hash: hashFrom(children),
+			hash: hashFrom(children, Directory),
 			children: children,
 			name: name,
 		}
@@ -167,9 +167,13 @@ func from(name string) (*node, error) {
 }
 
 // Computes the hash of the concatenation of the hashes of the nodes in children
-func hashFrom(children []*node) [32]byte {
+func hashFrom(children []*node, category byte) [32]byte {
 	var hashes []byte
+	hashes = append(hashes, []byte{category}...)
 	for i := 0; i < len(children); i++ {
+		if children[i].name != "" {
+			hashes = append(hashes, []byte(children[i].name)...)
+		}
 		hashes = append(hashes, children[i].hash[0: 32]...)
 	}
 	return sha256.Sum256(hashes)

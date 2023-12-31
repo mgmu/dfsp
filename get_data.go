@@ -44,14 +44,13 @@ name string) (*node, error) {
 					return nil, errors.New("Peer answered with wrong hash")
 				}
 				if debug {
-					fmt.Printf("Peer %s has datum %v, with value %v\n",
-					peer, hashr, valuer)
+					fmt.Printf("Peer %s has datum %v\n", peer, hashr)
 				}
 				categoryDatum, valueDatum := int(valuer[0]), valuer[1:]
 				var n *node
 				if categoryDatum == Chunk {
 					if debug {
-						fmt.Printf("Received chunk %v\n", valueDatum)
+						fmt.Printf("Received chunk %s\n", name)
 					}
 					hashC := sha256.Sum256(valuer)
 					if !bytes.Equal(hashC[0:32], hashr) {
@@ -62,7 +61,7 @@ name string) (*node, error) {
 						return nil,
 							errors.New("Hash mismatch, interrupting transfer")
 					} else if debug {
-						fmt.Printf("Hashes for chunk %v match\n", valueDatum)
+						fmt.Printf("Hashes for chunk %s match\n", name)
 					}
 					n = &node{Chunk, hashC, nil, name, valueDatum}
 				} else if categoryDatum == BigFile {
@@ -73,18 +72,20 @@ name string) (*node, error) {
 					for i := 0; i < len(valueDatum); i += 32 {
 						hashRq := valueDatum[i:i+32]
 						if debug {
-							fmt.Printf("Requesting hash %v\n", hash)
+							fmt.Printf("Requesting hash %v\n", hashRq)
 						}
-						child, err := getDatum(peer, hashRq, conn, name)
+						nameRq := fmt.Sprintf("%s-%d", name, i / 32)
+						child, err := getDatum(peer, hashRq, conn, "")
 						if err != nil {
 							return nil, err
 						}
 						children = append(children, child)
 						if debug {
-							fmt.Printf("Added child to node %s\n", name)
+							fmt.Printf("Added child %s to node %s\n",
+							nameRq, name)
 						}
 					}
-					hashC := hashFrom(children)
+					hashC := hashFrom(children, BigFile)
 					if !bytes.Equal(hashC[0:32], hashr) {
 						if debug {
 							fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
@@ -118,7 +119,7 @@ name string) (*node, error) {
 							child.name, name)
 						}
 					}
-					hashC := hashFrom(children)
+					hashC := hashFrom(children, Directory)
 					if !bytes.Equal(hashC[0:32], hash) {
 						if debug {
 							fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
