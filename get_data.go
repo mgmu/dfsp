@@ -38,7 +38,7 @@ name string) (*node, error) {
 					return nil, errors.New("Peer answered with wrong hash")
 				}
 			} else if typeRq == Datum {
-				lenr := uint16(bufr[5]<<8) | uint16(bufr[6])
+				lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
 				hashr, valuer := bufr[7:39], bufr[39:39 + lenr - 32]
 				if !bytes.Equal(hashr, hash) {
 					return nil, errors.New("Peer answered with wrong hash")

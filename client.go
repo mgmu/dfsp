@@ -399,7 +399,7 @@ func serverRegistration(conn net.PacketConn) error {
 			continue
 		}
 		rType = bufr[4]
-		rLen = uint16(bufr[5]<<8) | uint16(bufr[6])
+		rLen = uint16(bufr[5])<<8 | uint16(bufr[6])
 		if rType == NoOp || rType != HelloReply {
 			if debug {
 				fmt.Println("Server sent correct id but wrong type")
@@ -675,7 +675,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
-			length := (buf[5] << 8) | buf[6]
+			length := uint16(buf[5]) << 8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
 	}
