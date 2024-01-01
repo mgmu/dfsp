@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 const (
@@ -184,10 +185,11 @@ func hashFrom(children []*node, category byte) [32]byte {
 // If an error occurs, returns it.
 func (n *node) Write(path string) error {
 	var buf []byte
+	filename := strings.ReplaceAll(path + n.name, "\x00", "")
 	if n.category == Chunk {
 		buf = append(buf, n.data...)
 		if n.name != "" {
-			f, err := os.Create(path + n.name)
+			f, err := os.Create(filename)
 			if err != nil {
 				return err
 			} else if debug {
@@ -200,7 +202,7 @@ func (n *node) Write(path string) error {
 		}
 	} else if n.category == BigFile {
 		if n.name != "" {
-			f, err := os.Create(path + n.name)
+			f, err := os.Create(filename)
 			if err != nil {
 				return err
 			} else if debug {
@@ -223,17 +225,23 @@ func (n *node) Write(path string) error {
 			}
 		}
 	} else if n.category == Directory {
-		newdir := path + n.name
-		if n.name != "" {
-			if err := os.Mkdir(newdir, 0755); err != nil {
-				return err
+		if filename != "" {
+			if err := os.Mkdir(filename, 0755); err != nil {
+				if debug && os.IsExist(err) {
+					fmt.Printf("Directory %s already exists\n", filename)
+				} else {
+					return err
+				}
 			} else if debug {
-				fmt.Printf("Created directory %s\n", newdir)
+				fmt.Printf("Created directory %s\n", filename)
 			}
 		}
 		children := n.children
+		if debug {
+			fmt.Printf("Writing %d children of %s\n", len(children), n.name)
+		}
 		for len(children) > 0 {
-			if err := children[0].Write(newdir); err != nil {
+			if err := children[0].Write(filename + "/"); err != nil {
 				return err
 			} else if debug {
 				fmt.Println("Wrote child")

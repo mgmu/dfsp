@@ -89,7 +89,7 @@ func main() {
 	}
 
 	// send keepalive periodically
-	var wg sync.WaitGroup
+	/* var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -105,7 +105,7 @@ func main() {
 				}
 			}
 		}
-	}()
+	}() */
 
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Enter 'p' for peers display, 'd' for downloading a file:")
@@ -132,14 +132,18 @@ func main() {
 						hash = knownPeers[peer].rootHash
 					}
 					if len(hash) == 32 {
-						n, err := getDatum(peer, hash, conn, "")
+						n, err := getDatum(peer, hash, conn, "data")
 						if err != nil {
 							fmt.Println(err)
 						} else {
 							if debug {
 								fmt.Println("Beginning write")
 							}
-							n.Write(n.name)
+							if err := n.Write("./"); err != nil {
+								fmt.Printf("Error writing: %v\n", err)
+							} else if debug {
+								fmt.Println("Write done")
+							}
 						}
 					} else {
 						fmt.Println("Error: hash must be 32 bytes long.")
