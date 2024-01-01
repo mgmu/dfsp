@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -177,4 +178,70 @@ func hashFrom(children []*node, category byte) [32]byte {
 		hashes = append(hashes, children[i].hash[0: 32]...)
 	}
 	return sha256.Sum256(hashes)
+}
+
+// Writes the data contained in the node on the disk at given path.
+// If an error occurs, returns it.
+func (n *node) Write(path string) error {
+	var buf []byte
+	if n.category == Chunk {
+		buf = append(buf, n.data...)
+		if n.name != "" {
+			f, err := os.Create(path + n.name)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Created file %s\n", f.Name())
+			}
+			defer f.Close()
+			if _, err := f.Write(buf); err != nil {
+				return err
+			}
+		}
+	} else if n.category == BigFile {
+		if n.name != "" {
+			f, err := os.Create(path + n.name)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Created file %s\n", f.Name())
+			}
+			defer f.Close()
+			children := n.children
+			for len(children) > 0 {
+				if children[0].category == Chunk {
+					buf = append(buf, children[0].data...)
+					children = children[1:]
+				} else {
+					children = append(children[0].children, children[1:]...)
+				}
+			}
+			if _, err := f.Write(buf); err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Wrote %d bytes in file %s\n", len(buf), f.Name())
+			}
+		}
+	} else if n.category == Directory {
+		newdir := path + n.name
+		if n.name != "" {
+			if err := os.Mkdir(newdir, 0755); err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Created directory %s\n", newdir)
+			}
+		}
+		children := n.children
+		for len(children) > 0 {
+			if err := children[0].Write(newdir); err != nil {
+				return err
+			} else if debug {
+				fmt.Println("Wrote child")
+			}
+			children = children[1:]
+		}
+	} else {
+		return errors.New("node.Write(): unknown node category")
+	}
+	return nil
 }

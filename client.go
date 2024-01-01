@@ -132,10 +132,15 @@ func main() {
 						hash = knownPeers[peer].rootHash
 					}
 					if len(hash) == 32 {
-						_, err := getDatum(peer, hash, conn, "")
+						n, err := getDatum(peer, hash, conn, "")
 						if err != nil {
 							fmt.Println(err)
-						} 
+						} else {
+							if debug {
+								fmt.Println("Beginning write")
+							}
+							n.Write(n.name)
+						}
 					} else {
 						fmt.Println("Error: hash must be 32 bytes long.")
 					}
