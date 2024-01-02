@@ -27,6 +27,7 @@ const (
 	rootHashUrl     = "/root"
 	peerName        = "Slartibartfast"
 	limitExpBackoff = 32
+	IdLen = 4
 )
 
 var (
@@ -626,3 +627,14 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
 }
 
+// toId converts a slice of bytes of length 4 to an uint32 value and returns it.
+// If the slice is not of length 4 it returns 0 and an error. The value in bytes
+// is supposed to correspond to a uint32 value storid in NBO.
+func toId(bytes []byte) (uint32, error) {
+	l := len(bytes)
+	if l != IdLen {
+		return 0, fmt.Errorf("invalid slice length (%d), expected %d", l, IdLen)
+	}
+	return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 | uint32(bytes[2])<<8 |
+		uint32(bytes[3]), nil
+}
