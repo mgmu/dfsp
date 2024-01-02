@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
@@ -14,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"bufio"
 )
 
 const (
@@ -36,12 +39,14 @@ var (
 	id         uint32 = 0
 	idLock     sync.Mutex
 	extensions uint32 = 0
-	root *node = nil
+	root       *node  = nil
 	transport         = &*http.DefaultTransport.(*http.Transport)
 	client            = &http.Client{
 		Transport: transport,
 		Timeout:   50 * time.Second,
 	}
+	privateKey *ecdsa.PrivateKey = nil
+	publicKey  *ecdsa.PublicKey  = nil
 )
 
 func main() {
@@ -65,6 +70,16 @@ func main() {
 	if err != nil {
 		log.Fatal("net.ListenPacket:", err)
 	}
+
+	privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatal("ecdsa.GenerateKey:", err)
+	}
+	tmp, ok := privateKey.Public().(ecdsa.PublicKey)
+	if !ok {
+		log.Fatal("failed to get public key from private key")
+	}
+	publicKey = &tmp
 
 	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server: ", err)
@@ -311,9 +326,9 @@ func serverRegistration(conn net.PacketConn) error {
 	id++
 	idLock.Unlock()
 	helloRq := packet{
-		typeRq: uint8(Hello),
-		id:     idHello,
-		body:   buf,
+		typ:  uint8(Hello),
+		id:   idHello,
+		body: buf,
 	}
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
@@ -397,7 +412,7 @@ func serverRegistration(conn net.PacketConn) error {
 	server.key = buf[7 : 7+rLen]
 
 	pkrPacket := packet{
-		typeRq: uint8(PublicKeyReply),
+		typ: uint8(PublicKeyReply),
 		id:     rId,
 		body:   make([]byte, 0),
 	}
@@ -446,7 +461,7 @@ func serverRegistration(conn net.PacketConn) error {
 			rootHash = root.hash
 		}
 		packetRoot := packet{
-			typeRq: uint8(RootReply),
+			typ: uint8(RootReply),
 			id: rId,
 			body: rootHash[0:32],
 		}
@@ -515,9 +530,9 @@ func sendKeepalive(conn net.PacketConn) error {
 		fmt.Println("Unlocked id")
 	}
 	keepaliveRq := packet{
-		typeRq: uint8(Hello),
-		id:     idKeepalive,
-		body:   buf,
+		typ:  uint8(Hello),
+		id:   idKeepalive,
+		body: buf,
 	}
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
