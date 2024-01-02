@@ -60,7 +60,7 @@ func main() {
 
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-	discoverPeers(client)
+	discoverPeers()
 	conn, err := net.ListenPacket("udp", "")
 	if err != nil {
 		log.Fatal("net.ListenPacket:", err)
@@ -77,7 +77,7 @@ func main() {
 		defer wg.Done()
 		for {
 			time.Sleep(30 * time.Second)
-			errKeepalive := sendKeepalive(client, conn)
+			errKeepalive := sendKeepalive(conn)
 			if errKeepalive != nil {
 				if debug {
 					fmt.Println("Error in keepalive, registering again...")
@@ -116,7 +116,7 @@ func main() {
 	fmt.Println("Exiting...")
 }
 
-func discoverPeers(client *http.Client) {
+func discoverPeers() {
 	if debug {
 		fmt.Println("Discovering peers...")
 	}
@@ -144,15 +144,15 @@ func discoverPeers(client *http.Client) {
 	peers := strings.Split(string(buf), "\n")
 	l := len(peers) - 1 // -1 for empty string caused by last '\n'
 	for i := 0; i < l; i++ {
-		addrs, err := getPeerSocketAddrs(client, peers[i])
+		addrs, err := getPeerSocketAddrs(peers[i])
 		if err != nil {
 			log.Fatal("getPeerSocketAddrs:", err)
 		}
-		key, err := getPeerPublicKey(client, peers[i])
+		key, err := getPeerPublicKey(peers[i])
 		if err != nil {
 			log.Fatal("getPeerPublicKey:", err)
 		}
-		rootHash, err := getPeerRootHash(client, peers[i])
+		rootHash, err := getPeerRootHash(peers[i])
 		if err != nil {
 			log.Fatal("getPeerRootHash:f, err")
 		}
@@ -164,7 +164,7 @@ func discoverPeers(client *http.Client) {
 // peer p. If a socket address can not be resolved, or if the pair is unknown,
 // or if the server returned a non-2xx status code, returns nil and the
 // corresponding error.
-func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
+func getPeerSocketAddrs(p string) ([]*net.UDPAddr, error) {
 	if debug {
 		fmt.Println("Getting peer socket addresses...")
 		fmt.Println("Sending GET /peers/" + p + addressesUrl)
@@ -221,7 +221,7 @@ func getPeerSocketAddrs(client *http.Client, p string) ([]*net.UDPAddr, error) {
 // announced a public key or it has not announced any public key yet.
 // If an error is encoutered during the process, err is not nil and the byte
 // slice is.
-func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
+func getPeerPublicKey(p string) ([]byte, error) {
 	if debug {
 		fmt.Println("Getting " + p + keyUrl + " public key...")
 	}
@@ -258,9 +258,9 @@ func getPeerPublicKey(client *http.Client, p string) ([]byte, error) {
 
 // getPeerRootHash returns the root hash of the peer p. If this function returns
 // nil as err, it can mean two things: the peer is known and has announced a
-// root hash or the it has not announced a root hash yet. If an error is
+// root hash or it has not announced a root hash yet. If an error is
 // encoutered during the process, err is not nil and the byte slice is.
-func getPeerRootHash(client *http.Client, p string) ([]byte, error) {
+func getPeerRootHash(p string) ([]byte, error) {
 	if debug {
 		fmt.Println("Getting " + p + rootHashUrl + " root hash...")
 	}
@@ -300,20 +300,16 @@ func serverRegistration(conn net.PacketConn) error {
 		fmt.Println("Registering to server...")
 	}
 	var buf []byte
+	var bufr []byte
+	var err error
 
 	// Hello transfer
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
 	idLock.Lock()
-	if debug {
-		fmt.Println("Locked id")
-	}
 	idHello := id
 	id++
 	idLock.Unlock()
-	if debug {
-		fmt.Println("Unlocked id")
-	}
 	helloRq := packet{
 		typeRq: uint8(Hello),
 		id:     idHello,
@@ -322,94 +318,114 @@ func serverRegistration(conn net.PacketConn) error {
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
 
-	if debug {
-		fmt.Println("Sending Hello request...")
-	}
-	bufr, err := writeExpBackoff(conn, addr, helloRq.Bytes())
-	if debug {
-		fmt.Printf("Server response to hello request = %v\n", bufr)
-	}
-	if err != nil {
-		return err
-	}
-	respId, _ := toId(bufr[:4])
-	respType := bufr[4]
-	respLen := uint16(bufr[5]<<8) | uint16(bufr[6])
-	if respType == NoOp {
-		log.Fatal("Server sent NoOp and we don't know what to do")
-	}
-	if respType == ErrorReply {
-		fmt.Println("Error reply")
-		log.Fatal(string(bufr[7 : 7+respLen]))
-	}
-	if respType == Error {
-		fmt.Println("Error reply")
-		log.Fatal(string(buf[7 : 7+respLen]))
-	}
-	if respType != HelloReply {
-		return fmt.Errorf("not the right response to hello rq %d", respType)
-	}
-	if respId != helloRq.id {
-		return fmt.Errorf("Peer respond with id %d to packet id %d", respId,
-			helloRq.id)
-	}
-
-	// Key transfer
-	buf = make([]byte, 7+65536+64+1)
-	if debug {
-		fmt.Println("Waiting for PublicKey packet...")
-	}
-	n, _, err := conn.ReadFrom(buf)
-	if n == len(buf) {
-		log.Fatal("Peer packet exceeded maximum length")
-	}
-	if err != nil {
-		return err
-	}
-	if len(buf) < 7 {
-		log.Fatal("Server sent a packet too small")
-	}
-	idPublicKeyPacket, _ := toId(buf[:4])
-	typeRq := uint8(buf[4])
-	lenRq := uint16(buf[5])<<8 | uint16(buf[6])
-	if debug {
-		fmt.Printf("Received type %d of length %d with id %d\n", typeRq,
-			lenRq, idPublicKeyPacket)
-		fmt.Printf("Content: %v\n", buf[7:7+lenRq])
-	}
-	if typeRq == ErrorReply {
-		log.Fatal(buf[7 : 7+lenRq])
-	}
-	if typeRq != PublicKey {
-		return fmt.Errorf("TODO: not the expected packet type: %d", typeRq)
-	}
-	server.handshakeMade = true
-	server.key = buf[7 : 7+lenRq]
-	server.lastInteraction = time.Now()
-
-	publicKeyReplyPacket := packet{
-		typeRq: uint8(PublicKeyReply),
-		id:     idPublicKeyPacket,
-		body:   make([]byte, 0),
-	}
-	if debug {
-		fmt.Printf("Packet to send: %v\n", publicKeyReplyPacket.Bytes())
-	}
-	for typeRq != Root && typeRq == PublicKey {
-		bufr, err = writeExpBackoff(conn, addr, publicKeyReplyPacket.Bytes())
-		typeRq = uint8(bufr[4])
-		publicKeyReplyPacket.id, _ = toId(bufr[:4])
+	var rId uint32 = 0
+	var rType uint8 = 0
+	var rLen uint16 = 0
+	for rType != HelloReply {
 		if debug {
-			fmt.Printf("bytes received after publicKeyReplyPacket: %v\n", bufr)
-			fmt.Printf("new id of reply: %d\n", publicKeyReplyPacket.id)
-			fmt.Printf("Packet to send: %v\n", publicKeyReplyPacket.Bytes())
+			fmt.Println("Sending Hello request to server...")
+		}
+		bufr, err = writeExpBackoff(conn, addr, helloRq.Bytes())
+		if debug {
+			fmt.Printf("Server response to hello request = %v\n", bufr)
 		}
 		if err != nil {
 			return err
 		}
-		if typeRq == Error || typeRq == ErrorReply {
-			fmt.Println("Server indicates error")
-			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8|uint16(bufr[6])]))
+		rId, _ = toId(bufr[:4])
+		if rId != helloRq.id {
+			go func() {
+				if err = handleRequest(bufr, addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			continue
+		}
+		rType = bufr[4]
+		rLen = uint16(bufr[5]<<8) | uint16(bufr[6])
+		if rType == NoOp || rType != HelloReply {
+			if debug {
+				fmt.Println("Server sent correct id but wrong type")
+				fmt.Println("About to try again")
+			}
+			continue
+		}
+		if rType == ErrorReply || rType == Error {
+			if debug {
+				fmt.Println("Server notifies error from this client")
+			}
+			log.Fatal(string(bufr[7 : 7+rLen]))
+		}
+	}
+
+	server.handshakeMade = true
+	server.lastInteraction = time.Now()
+
+	// Key transfer
+	buf = make([]byte, 7+65536+64+1)
+	for rType != PublicKey {
+		if debug {
+			fmt.Println("Waiting for PublicKey packet...")
+		}
+		n, _, err := conn.ReadFrom(buf)
+		if n == len(buf) {
+			if debug {
+				fmt.Println("Packet truncated, trying again...")
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if len(buf) < 7 {
+			if debug {
+				fmt.Println("Packet size too small, trying again...")
+			}
+			continue
+		}
+		rId, _ = toId(buf[:4])
+		rType = uint8(buf[4])
+		rLen := uint16(buf[5])<<8 | uint16(buf[6])
+		if rType == ErrorReply || rType == Error {
+			if debug {
+				fmt.Println("Server notifies error from this client")
+			}
+			log.Fatal(buf[7 : 7+rLen])
+		}
+	}
+
+	server.key = buf[7 : 7+rLen]
+
+	pkrPacket := packet{
+		typeRq: uint8(PublicKeyReply),
+		id:     rId,
+		body:   make([]byte, 0),
+	}
+
+	for rType != Root {
+		if debug {
+			fmt.Println("Waiting for Root packet...")
+		}
+		bufr, err = writeExpBackoff(conn, addr, pkrPacket.Bytes())
+		rType = uint8(bufr[4])
+		if len(bufr) < 7 {
+			if debug {
+				fmt.Println("Server sent packet too small")
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if rType == Error || rType == ErrorReply {
+			if debug {
+				fmt.Println("Server indicates error")
+			}
+			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8 | uint16(bufr[6])]))
+		}
+		if rType == PublicKey {
+			pkrPacket.id = uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
+				uint32(bufr[2])<<8 | uint32(bufr[3])
 		}
 	}
 
@@ -418,24 +434,9 @@ func serverRegistration(conn net.PacketConn) error {
 		if debug {
 			fmt.Println("Waiting for Root Hash transfer")
 		}
-		if len(bufr) < 7 {
-			log.Fatal("Server sent a packet too small")
-		}
-		idRq, _ := toId(bufr[:4])
-		typeRq := uint8(bufr[4])
-		lenRq := uint16(bufr[5])<<8 | uint16(bufr[6])
-		if debug {
-			fmt.Printf("Received req type %d of length %d with id %d\n", typeRq,
-				lenRq, idRq)
-			fmt.Printf("idRq bytes: %v\n", bufr[:4])
-		}
-		if typeRq == ErrorReply {
-			log.Fatal(bufr[7 : 7+lenRq])
-		}
-		if typeRq != Root {
-			return fmt.Errorf("Expected type 4 but got %d", typeRq)
-		}
-		server.rootHash = bufr[7 : 7+lenRq]
+		rId, _ = toId(bufr[:4])
+		rLen = uint16(bufr[5])<<8 | uint16(bufr[6])
+		server.rootHash = bufr[7 : 7+rLen]
 		server.lastInteraction = time.Now()
 
 		var rootHash [32]byte
@@ -444,10 +445,9 @@ func serverRegistration(conn net.PacketConn) error {
 		} else {
 			rootHash = root.hash
 		}
-		tmp, _ := toId(bufr[:4])
 		packetRoot := packet{
 			typeRq: uint8(RootReply),
-			id: tmp,
+			id: rId,
 			body: rootHash[0:32],
 		}
 		if debug {
@@ -463,8 +463,7 @@ func serverRegistration(conn net.PacketConn) error {
 			log.Fatal("SetReadDeadline:", err)
 		}
 
-		bufr = make([]byte, 7+65536+64+1)
-		n, _, err := conn.ReadFrom(bufr)
+		n, _, err := conn.ReadFrom(buf)
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
 		}
@@ -473,22 +472,17 @@ func serverRegistration(conn net.PacketConn) error {
 				log.Fatal("ReadFrom:", err)
 			} else {
 				if debug {
-					fmt.Println("Deadline exceeded")
+					fmt.Println("Read deadline exceeded")
+					fmt.Println("Checking if server received root hash")
 				}
 
-				resp, err := client.Get(serverUrl + peersUrl + "/" + peerName +
-					rootHashUrl)
-				if err != nil {
-					log.Fatal("Get:", err)
-				}
-
-				if resp.StatusCode == 200 {
-					fmt.Println("Root hash transfer done")
+				_, err = getPeerRootHash(peerName)
+				if err == nil {
 					break
-				} else if resp.StatusCode == 404 {
-					if debug {
-						log.Fatal("Error during RootReply: unknown peer")
-					}
+				}
+				if debug {
+					fmt.Println(err)
+					fmt.Println("Trying again...")
 				}
 			}
 		}
@@ -506,7 +500,7 @@ func serverRegistration(conn net.PacketConn) error {
 // alive. It should be called periodically. Errors are handled differently than
 // in serverRegistration: if an error is encountered, the function simply checks
 // if the registration is still alive, and if it is not, it returns an error.
-func sendKeepalive(client *http.Client, conn net.PacketConn) error {
+func sendKeepalive(conn net.PacketConn) error {
 	var buf []byte
 	buf = binary.BigEndian.AppendUint32(buf, extensions)
 	buf = append(buf, peerName...)
@@ -538,22 +532,22 @@ func sendKeepalive(client *http.Client, conn net.PacketConn) error {
 		if debug {
 			fmt.Println("Error in keepalive sending, checking registration")
 		}
-		_, err := getPeerSocketAddrs(client, peerName)
+		_, err := getPeerSocketAddrs(peerName)
 		if err != nil {
 			return err
 		} else if debug {
 			fmt.Println("Client is still registered")
 		}
 	}
-	respId, _ := toId(bufr[:4])
-	respType := bufr[4]
-	if respType == ErrorReply ||
-		respType != HelloReply ||
-		respId != keepaliveRq.id {
+	rId, _ := toId(bufr[:4])
+	rType := bufr[4]
+	if rType == ErrorReply ||
+		rType != HelloReply ||
+		rId != keepaliveRq.id {
 		if debug {
 			fmt.Println("Error in response, checking registration...")
 		}
-		_, err := getPeerSocketAddrs(client, peerName)
+		_, err := getPeerSocketAddrs(peerName)
 		if err != nil {
 			return err
 		} else if debug {
@@ -665,7 +659,9 @@ func updateInteractionTime(addr *net.UDPAddr) error {
 }
 
 // handleRequest receives a buffer, an address and a connection and sends a
-// response, if needed, to the emitter of the received request.
+// response, if needed, to the emitter of the received request. This function
+// is meant to be used in a separate thread to respond to an incoming
+// communication of different id than the current one
 func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 	fname := "handleRequest"
 	if addr == nil {
