@@ -74,13 +74,13 @@ name string) (*node, error) {
 						if debug {
 							fmt.Printf("Requesting hash %v\n", hashRq)
 						}
-						nameRq := fmt.Sprintf("%s-%d", name, i / 32)
 						child, err := getDatum(peer, hashRq, conn, "")
 						if err != nil {
 							return nil, err
 						}
 						children = append(children, child)
 						if debug {
+							nameRq := fmt.Sprintf("%s-%d", name, i / 32)
 							fmt.Printf("Added child %s to node %s\n",
 							nameRq, name)
 						}
