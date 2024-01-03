@@ -30,7 +30,7 @@ const (
 	rootHashUrl     = "/root"
 	peerName        = "Slartibartfast"
 	limitExpBackoff = 32
-	IdLen = 4
+	IdLen           = 4
 )
 
 var (
@@ -416,9 +416,9 @@ func serverRegistration(conn net.PacketConn) error {
 	publicKey.Y.FillBytes(formatted[32:])
 
 	pkrPacket := packet{
-		typ: uint8(PublicKeyReply),
-		id:     rId,
-		body:   formatted,
+		typ:  uint8(PublicKeyReply),
+		id:   rId,
+		body: formatted,
 	}
 
 	for rType != Root {
@@ -440,7 +440,7 @@ func serverRegistration(conn net.PacketConn) error {
 			if debug {
 				fmt.Println("Server indicates error")
 			}
-			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8 | uint16(bufr[6])]))
+			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8|uint16(bufr[6])]))
 		}
 		if rType == PublicKey {
 			pkrPacket.id = uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
@@ -465,8 +465,8 @@ func serverRegistration(conn net.PacketConn) error {
 			rootHash = root.hash
 		}
 		packetRoot := packet{
-			typ: uint8(RootReply),
-			id: rId,
+			typ:  uint8(RootReply),
+			id:   rId,
 			body: rootHash[0:32],
 		}
 		if debug {
@@ -699,7 +699,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if debug {
 			fmt.Println("Handling Hello request")
 		}
-		body := make([]byte, 4 + len(peerName))
+		body := make([]byte, 4+len(peerName))
 		body = binary.BigEndian.AppendUint32(body, extensions)
 		body = append(body, peerName...)
 		resp := packet{HelloReply, id, body}
@@ -733,8 +733,8 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 			return nil
 		}
 		resp := packet{
-			typeRq: PublicKeyReply,
-			id: id,
+			typ: PublicKeyReply,
+			id:  id,
 		}
 		_, err = conn.WriteTo(resp.Bytes(), addr)
 		if err != nil {
@@ -785,7 +785,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if !known {
 			return nil
 		}
-		hash := buf[7:7+l]
+		hash := buf[7 : 7+l]
 		resp := packet{NoDatum, id, hash}
 		_, err = conn.WriteTo(resp.Bytes(), addr)
 		if err != nil {
