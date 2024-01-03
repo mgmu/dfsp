@@ -27,6 +27,7 @@ const (
 	rootHashUrl     = "/root"
 	peerName        = "Slartibartfast"
 	limitExpBackoff = 32
+	IdLen = 4
 )
 
 var (
@@ -329,8 +330,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if err != nil {
 		return err
 	}
-	respId := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
-		uint32(bufr[3])
+	respId, _ := toId(bufr[:4])
 	respType := bufr[4]
 	respLen := uint16(bufr[5]<<8) | uint16(bufr[6])
 	if respType == NoOp {
@@ -367,8 +367,7 @@ func serverRegistration(conn net.PacketConn) error {
 	if len(buf) < 7 {
 		log.Fatal("Server sent a packet too small")
 	}
-	idPublicKeyPacket := uint32(buf[0])<<24 | uint32(buf[1])<<16 |
-		uint32(buf[2])<<8 | uint32(buf[3])
+	idPublicKeyPacket, _ := toId(buf[:4])
 	typeRq := uint8(buf[4])
 	lenRq := uint16(buf[5])<<8 | uint16(buf[6])
 	if debug {
@@ -396,8 +395,7 @@ func serverRegistration(conn net.PacketConn) error {
 	for typeRq != Root && typeRq == PublicKey {
 		bufr, err = writeExpBackoff(conn, addr, publicKeyReplyPacket.Bytes())
 		typeRq = uint8(bufr[4])
-		publicKeyReplyPacket.id = uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
-			uint32(bufr[2])<<8 | uint32(bufr[3])
+		publicKeyReplyPacket.id, _ = toId(bufr[:4])
 		if debug {
 			fmt.Printf("bytes received after publicKeyReplyPacket: %v\n", bufr)
 			fmt.Printf("new id of reply: %d\n", publicKeyReplyPacket.id)
@@ -420,8 +418,7 @@ func serverRegistration(conn net.PacketConn) error {
 		if len(bufr) < 7 {
 			log.Fatal("Server sent a packet too small")
 		}
-		idRq := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
-			uint32(bufr[3])
+		idRq, _ := toId(bufr[:4])
 		typeRq := uint8(bufr[4])
 		lenRq := uint16(bufr[5])<<8 | uint16(bufr[6])
 		if debug {
@@ -444,10 +441,10 @@ func serverRegistration(conn net.PacketConn) error {
 		} else {
 			rootHash = root.hash
 		}
+		tmp, _ := toId(bufr[:4])
 		packetRoot := packet{
 			typeRq: uint8(RootReply),
-			id: uint32(bufr[0])<<24 | uint32(bufr[1])<<16 | uint32(bufr[2])<<8 |
-				uint32(bufr[3]),
+			id: tmp,
 			body: rootHash[0:32],
 		}
 		if debug {
@@ -545,8 +542,7 @@ func sendKeepalive(client *http.Client, conn net.PacketConn) error {
 			fmt.Println("Client is still registered")
 		}
 	}
-	respId := uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
-		uint32(bufr[2])<<8 | uint32(bufr[3])
+	respId, _ := toId(bufr[:4])
 	respType := bufr[4]
 	if respType == ErrorReply ||
 		respType != HelloReply ||
@@ -626,3 +622,14 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
 }
 
+// toId converts a slice of bytes of length 4 to an uint32 value and returns it.
+// If the slice is not of length 4 it returns 0 and an error. The value in bytes
+// is supposed to correspond to a uint32 value storid in NBO.
+func toId(bytes []byte) (uint32, error) {
+	l := len(bytes)
+	if l != IdLen {
+		return 0, fmt.Errorf("invalid slice length (%d), expected %d", l, IdLen)
+	}
+	return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 | uint32(bytes[2])<<8 |
+		uint32(bytes[3]), nil
+}
