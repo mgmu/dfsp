@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 )
 
@@ -28,119 +29,145 @@ name string) (*node, error) {
 	}
 	packet := packet{GetDatum, idDatum, hash}
 	for _, addr := range knownPeers[peer].addrs {
-		if bufr, err := writeExpBackoff(conn, addr, packet.Bytes());
-		err == nil {
-			if typeRq := int(bufr[4]); typeRq == NoDatum {
-				hashr := bufr[7:39]
-				if bytes.Equal(hashr, hash) {
-					return nil, errors.New("Peer does not have requested datum")
+		for {
+			if bufr, err := writeExpBackoff(conn, addr, packet.Bytes());
+			err == nil {
+				if idr, _ := toId(bufr[0:4]); idr != idDatum {
+					go func() {
+						if err = handleRequest(bufr, addr, conn); err != nil {
+							log.Fatal(err)
+						}
+					}()
+					continue
+				}
+				if typeRq := int(bufr[4]); typeRq == NoDatum {
+					hashr := bufr[7:39]
+					if bytes.Equal(hashr, hash) {
+						return nil, errors.New("Peer does not have requested datum")
+					} else {
+						return nil, errors.New("Peer answered with wrong hash")
+					}
+				} else if typeRq == Datum {
+					lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
+					hashr, valuer := bufr[7:39], bufr[39:39 + lenr - 32]
+					if !bytes.Equal(hashr, hash) {
+						if debug {
+							fmt.Printf("Received hash %v, expected %v\n",
+							hashr, hash)
+						}
+						continue
+					} else if debug {
+						fmt.Printf("Peer %s has datum %v\n", peer, hashr)
+					}
+					categoryDatum, valueDatum := int(valuer[0]), valuer[1:]
+					var n *node
+					if categoryDatum == Chunk {
+						if debug {
+							fmt.Printf("Received chunk %s\n", name)
+						}
+						hashC := sha256.Sum256(valuer)
+						if !bytes.Equal(hashC[0:32], hashr) {
+							if debug {
+								fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
+								name, hashr, hashC)
+							}
+							return nil,
+							errors.New("Hash mismatch, interrupting transfer")
+						} else if debug {
+							fmt.Printf("Hashes for chunk %s match\n", name)
+						}
+						n = &node{Chunk, hashC, nil, name, valueDatum}
+					} else if categoryDatum == BigFile {
+						if debug {
+							fmt.Printf("Received file %v\n", valueDatum)
+						}
+						var children []*node
+						for i := 0; i < len(valueDatum); i += 32 {
+							hashRq := valueDatum[i:i+32]
+							if debug {
+								fmt.Printf("Requesting hash %v\n", hashRq)
+							}
+							child, err := getDatum(peer, hashRq, conn, "")
+							if err != nil {
+								return nil, err
+							}
+							children = append(children, child)
+							if debug {
+								nameRq := fmt.Sprintf("%s-%d", name, i / 32)
+								fmt.Printf("Added child %s to node %s\n",
+								nameRq, name)
+							}
+						}
+						hashC := hashFrom(children, BigFile)
+						if !bytes.Equal(hashC[0:32], hashr) {
+							if debug {
+								fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
+								name, hashr, hashC)
+							}
+							return nil,
+							errors.New("Hash mismatch, interrupting transfer")
+						} else if debug {
+							fmt.Printf("Hashes for %s match\n", name)
+						}
+						n = &node{BigFile, hashC, children, name, nil}
+					} else if categoryDatum == Directory {
+						if debug {
+							fmt.Printf("Received directory %v\n", valueDatum)
+						}
+						var children []*node
+						for i := 0; i < len(valueDatum); i += 64 {
+							nameRq := string(valueDatum[i:i+32])
+							hashRq := valueDatum[i+32:i+64]
+							if debug {
+								fmt.Printf("Requesting file %s with hash %v\n",
+								nameRq, hashRq)
+							}
+							child, err := getDatum(peer, hashRq, conn, nameRq)
+							if err != nil {
+								return nil, err
+							}
+							children = append(children, child)
+							if debug {
+								fmt.Printf("Added child %s to node %s\n",
+								child.name, name)
+							}
+						}
+						hashC := hashFrom(children, Directory)
+						if !bytes.Equal(hashC[0:32], hash) {
+							if debug {
+								fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
+								name, hashr, hashC)
+							}
+							return nil,
+							errors.New("Hash mismatch, interrupting transfer")
+						} else if debug {
+							fmt.Printf("Hashes for %s match\n", name)
+						}
+						n = &node{Directory, hashC, children, name, nil}
+					} else {
+						if debug {
+							fmt.Printf("Unknown datum type %d\n", categoryDatum)
+						}
+						return nil, errors.New("Unknown datum type")
+					}
+					return n, nil
+				} else if typeRq == Error || typeRq == ErrorReply {
+					lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
+					return nil, errors.New(string(bufr[7:7+lenr]))
 				} else {
-					return nil, errors.New("Peer answered with wrong hash")
+					go func() {
+						if err = handleRequest(bufr, addr, conn); err != nil {
+							log.Fatal(err)
+						}
+					}()
+					continue
 				}
-			} else if typeRq == Datum {
-				lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
-				hashr, valuer := bufr[7:39], bufr[39:39 + lenr - 32]
-				if !bytes.Equal(hashr, hash) {
-					return nil, errors.New("Peer answered with wrong hash")
-				}
+			} else {
 				if debug {
-					fmt.Printf("Peer %s has datum %v\n", peer, hashr)
+					fmt.Println("getDatum: trying next address")
 				}
-				categoryDatum, valueDatum := int(valuer[0]), valuer[1:]
-				var n *node
-				if categoryDatum == Chunk {
-					if debug {
-						fmt.Printf("Received chunk %s\n", name)
-					}
-					hashC := sha256.Sum256(valuer)
-					if !bytes.Equal(hashC[0:32], hashr) {
-						if debug {
-							fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
-							name, hashr, hashC)
-						}
-						return nil,
-							errors.New("Hash mismatch, interrupting transfer")
-					} else if debug {
-						fmt.Printf("Hashes for chunk %s match\n", name)
-					}
-					n = &node{Chunk, hashC, nil, name, valueDatum}
-				} else if categoryDatum == BigFile {
-					if debug {
-						fmt.Printf("Received file %v\n", valueDatum)
-					}
-					var children []*node
-					for i := 0; i < len(valueDatum); i += 32 {
-						hashRq := valueDatum[i:i+32]
-						if debug {
-							fmt.Printf("Requesting hash %v\n", hashRq)
-						}
-						child, err := getDatum(peer, hashRq, conn, "")
-						if err != nil {
-							return nil, err
-						}
-						children = append(children, child)
-						if debug {
-							nameRq := fmt.Sprintf("%s-%d", name, i / 32)
-							fmt.Printf("Added child %s to node %s\n",
-							nameRq, name)
-						}
-					}
-					hashC := hashFrom(children, BigFile)
-					if !bytes.Equal(hashC[0:32], hashr) {
-						if debug {
-							fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
-							name, hashr, hashC)
-						}
-						return nil,
-							errors.New("Hash mismatch, interrupting transfer")
-					} else if debug {
-						fmt.Printf("Hashes for %s match\n", name)
-					}
-					n = &node{BigFile, hashC, children, name, nil}
-				} else if categoryDatum == Directory {
-					if debug {
-						fmt.Printf("Received directory %v\n", valueDatum)
-					}
-					var children []*node
-					for i := 0; i < len(valueDatum); i += 64 {
-						nameRq := string(valueDatum[i:i+32])
-						hashRq := valueDatum[i+32:i+64]
-						if debug {
-							fmt.Printf("Requesting file %s with hash %v\n",
-							nameRq, hashRq)
-						}
-						child, err := getDatum(peer, hashRq, conn, nameRq)
-						if err != nil {
-							return nil, err
-						}
-						children = append(children, child)
-						if debug {
-							fmt.Printf("Added child %s to node %s\n",
-							child.name, name)
-						}
-					}
-					hashC := hashFrom(children, Directory)
-					if !bytes.Equal(hashC[0:32], hash) {
-						if debug {
-							fmt.Printf("%s:\nReceived: %v\nComputed: %v\n",
-							name, hashr, hashC)
-						}
-						return nil,
-							errors.New("Hash mismatch, interrupting transfer")
-					} else if debug {
-						fmt.Printf("Hashes for %s match\n", name)
-					}
-					n = &node{Directory, hashC, children, name, nil}
-				} else {
-					if debug {
-						fmt.Printf("Unknown datum type %d\n", categoryDatum)
-					}
-					return nil, errors.New("Unknown datum type")
-				}
-				return n, nil
+				break
 			}
-		} else if debug {
-			fmt.Println("Error while writing to peer, trying next address")
 		}
 	}
 	return nil, errors.New("Could not join peer")
