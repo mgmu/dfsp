@@ -75,11 +75,11 @@ func main() {
 	if err != nil {
 		log.Fatal("ecdsa.GenerateKey:", err)
 	}
-	tmp, ok := privateKey.Public().(ecdsa.PublicKey)
+	tmp, ok := privateKey.Public().(*ecdsa.PublicKey)
 	if !ok {
 		log.Fatal("failed to get public key from private key")
 	}
-	publicKey = &tmp
+	publicKey = tmp
 
 	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server: ", err)
@@ -411,10 +411,14 @@ func serverRegistration(conn net.PacketConn) error {
 
 	server.key = buf[7 : 7+rLen]
 
+	formatted := make([]byte, 64)
+	publicKey.X.FillBytes(formatted[:32])
+	publicKey.Y.FillBytes(formatted[32:])
+
 	pkrPacket := packet{
 		typ: uint8(PublicKeyReply),
 		id:     rId,
-		body:   make([]byte, 0),
+		body:   formatted,
 	}
 
 	for rType != Root {

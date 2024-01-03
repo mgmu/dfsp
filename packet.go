@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"log"
 )
 
@@ -41,7 +42,18 @@ func (pack *packet) Bytes() []byte {
 	res = append(res, pack.body...)
 	switch pack.typ {
 	case Hello, HelloReply, PublicKey, PublicKeyReply, Root, RootReply:
-		res = append(res, Signature(res[:7+length])...)
+		tmp := Signature(res[:7+length])
+		if debug {
+			fmt.Println("Debug: bytes of signature")
+			fmt.Println(tmp)
+			fmt.Println("Debug: bytes of packet before signature append")
+			fmt.Println(res)
+		}
+		res = append(res, tmp...)
+		if debug {
+			fmt.Println("Debug: bytes of packet after signature append")
+			fmt.Println(res)
+		}
 	}
 	return res
 }
@@ -53,11 +65,11 @@ func (pack *packet) Length() uint16 {
 	case NoOp, Error, ErrorReply:
 		return uint16(len(pack.body))
 	case Hello, HelloReply:
-		return 4 + uint16(len(peerName)) + 64
+		return 4 + uint16(len(peerName))
 	case PublicKey, PublicKeyReply:
 		return 64
 	case Root, RootReply:
-		return 96
+		return 32
 	case GetDatum, Datum:
 		return 32
 	case NoDatum:
