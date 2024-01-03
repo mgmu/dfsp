@@ -89,10 +89,7 @@ func main() {
 	}
 
 	// send keepalive periodically
-	/* var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		for {
 			time.Sleep(30 * time.Second)
 			errKeepalive := sendKeepalive(conn)
@@ -105,7 +102,7 @@ func main() {
 				}
 			}
 		}
-	}() */
+	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Enter 'p' for peers display, 'd' for downloading a file:")
