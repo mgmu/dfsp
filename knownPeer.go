@@ -39,3 +39,15 @@ func (kp *knownPeer) String() string {
 	res += fmt.Sprintf(" Last interaction time: %s\n", kp.lastInteraction)
 	return res
 }
+
+// Returns true if the given UDP address is at least one the addresses of this
+// peer
+func (kp *knownPeer) has(other *net.UDPAddr) bool {
+	for _, addr := range kp.addrs {
+		if addr.IP.Equal(other.IP) && addr.Port == other.Port &&
+			addr.Zone == other.Zone {
+			return true
+		}
+	}
+	return false
+}
