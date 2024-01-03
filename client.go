@@ -596,52 +596,47 @@ func sendKeepalive(conn net.PacketConn) error {
 	}
 	knownPeersLock.Lock()
 	server := knownPeers[serverName]
-	addr := server.addrs[0]
+	addr := *server.addrs[0]
 	knownPeersLock.Unlock()
 	if debug {
 		fmt.Println("Sending keepalive...")
 	}
-	bufr, err := writeExpBackoff(conn, addr, keepaliveRq.Bytes())
-	if debug {
-		fmt.Printf("Server response to keepalive = %v\n", bufr)
-	}
-	if err != nil {
+	for {
+		bufr, err := writeExpBackoff(conn, &addr, keepaliveRq.Bytes())
 		if debug {
-			fmt.Println("Error in keepalive sending, checking registration")
+			fmt.Printf("Server response to keepalive = %v\n", bufr)
 		}
-		_, err := getPeerSocketAddrs(peerName)
 		if err != nil {
-
-			return err
-		} else if debug {
-			fmt.Println("Client is still registered")
+			if debug {
+				fmt.Println("Error in keepalive sending, checking registration")
+			}
+			_, err := getPeerSocketAddrs(peerName)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Println("Client is still registered")
+			}
+		}
+		rId, _ := toId(bufr[:4])
+		rType := bufr[4]
+		if rType != HelloReply || rId != keepaliveRq.id {
+			go func() {
+				if err := handleRequest(bufr, &addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			continue
+		} else {
+			knownPeersLock.Lock()
+			updateInteractionTime(&addr)
+			knownPeersLock.Unlock()
+			if debug {
+				fmt.Printf("Last interaction with server: %v\n",
+					server.lastInteraction)
+			}
+			return nil
 		}
 	}
-	rId, _ := toId(bufr[:4])
-	rType := bufr[4]
-	if rType == ErrorReply ||
-		rType != HelloReply ||
-		rId != keepaliveRq.id {
-		if debug {
-			fmt.Println("Error in response, checking registration...")
-		}
-		_, err := getPeerSocketAddrs(peerName)
-		if err != nil {
-			return err
-		} else if debug {
-			fmt.Println("Client is still registered")
-		}
-	} else {
-		knownPeersLock.Lock()
-		server = knownPeers[serverName]
-		server.lastInteraction = time.Now()
-		knownPeersLock.Unlock()
-		if debug {
-			fmt.Printf("Last interaction with server: %v\n",
-				server.lastInteraction)
-		}
-	}
-	return nil
 }
 
 // Writes to the given socket the given data destined to the given address and
