@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"slices"
 	"time"
 )
 
@@ -50,4 +51,16 @@ func (kp *knownPeer) has(other *net.UDPAddr) bool {
 		}
 	}
 	return false
+}
+
+// Returns true if the key of this known peer is equal to the given slice.
+func (kp *knownPeer) keyMatches(other []byte) bool {
+	return slices.Equal(kp.key, other)
+}
+
+// Returns true if this known peer has a key, i.e a key that is not a 64 long
+// byte slice of zeros.
+func (kp *knownPeer) implementsSignatures() bool {
+	b := make([]byte, 64)
+	return !kp.keyMatches(b)
 }

@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
@@ -8,13 +12,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-	"bufio"
 )
 
 const (
@@ -27,21 +32,24 @@ const (
 	rootHashUrl     = "/root"
 	peerName        = "Slartibartfast"
 	limitExpBackoff = 32
-	IdLen = 4
+	idLen           = 4
 )
 
 var (
-	knownPeers        = make(map[string]*knownPeer)
-	debug             = true
-	id         uint32 = 0
-	idLock     sync.Mutex
-	extensions uint32 = 0
-	root *node = nil
-	transport         = &*http.DefaultTransport.(*http.Transport)
-	client            = &http.Client{
+	knownPeers     = make(map[string]*knownPeer)
+	knownPeersLock sync.Mutex
+	debug                 = true
+	id             uint32 = 0
+	idLock         sync.Mutex
+	extensions     uint32 = 0
+	root           *node  = nil
+	transport             = &*http.DefaultTransport.(*http.Transport)
+	client                = &http.Client{
 		Transport: transport,
 		Timeout:   50 * time.Second,
 	}
+	privateKey *ecdsa.PrivateKey = nil
+	publicKey  *ecdsa.PublicKey  = nil
 )
 
 func main() {
@@ -65,6 +73,16 @@ func main() {
 	if err != nil {
 		log.Fatal("net.ListenPacket:", err)
 	}
+
+	privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatal("ecdsa.GenerateKey:", err)
+	}
+	tmp, ok := privateKey.Public().(*ecdsa.PublicKey)
+	if !ok {
+		log.Fatal("failed to get public key from private key")
+	}
+	publicKey = tmp
 
 	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server: ", err)
@@ -100,10 +118,12 @@ func main() {
 			case "d":
 				log.Fatal("todo")
 			case "p":
+				knownPeersLock.Lock()
 				for k, v := range knownPeers {
 					fmt.Println(k)
 					fmt.Println(v)
 				}
+				knownPeersLock.Unlock()
 			default:
 				fmt.Println("Try again.")
 			}
@@ -144,20 +164,32 @@ func discoverPeers() {
 	peers := strings.Split(string(buf), "\n")
 	l := len(peers) - 1 // -1 for empty string caused by last '\n'
 	for i := 0; i < l; i++ {
-		addrs, err := getPeerSocketAddrs(peers[i])
+		addrs, key, rootHash, err := fetchInfoFor(peers[i])
 		if err != nil {
-			log.Fatal("getPeerSocketAddrs:", err)
+			log.Fatal("fetchInfoFor:", err)
 		}
-		key, err := getPeerPublicKey(peers[i])
-		if err != nil {
-			log.Fatal("getPeerPublicKey:", err)
-		}
-		rootHash, err := getPeerRootHash(peers[i])
-		if err != nil {
-			log.Fatal("getPeerRootHash:f, err")
-		}
+		knownPeersLock.Lock()
 		knownPeers[peers[i]] = newKnownPeer(addrs, key, rootHash)
+		knownPeersLock.Unlock()
 	}
+}
+
+// Fetches the socket addresses, the public key and the root hash of a peer of
+// given name.
+func fetchInfoFor(name string) ([]*net.UDPAddr, []byte, []byte, error) {
+	addrs, err := getPeerSocketAddrs(name)
+	if err != nil {
+		return nil, []byte{}, []byte{}, err
+	}
+	key, err := getPeerPublicKey(name)
+	if err != nil {
+		return nil, []byte{}, []byte{}, err
+	}
+	rootHash, err := getPeerRootHash(name)
+	if err != nil {
+		return nil, []byte{}, []byte{}, err
+	}
+	return addrs, key, rootHash, nil
 }
 
 // getPeerSocketAddrs returns a list of pointers to UDP socket addresses of the
@@ -311,12 +343,14 @@ func serverRegistration(conn net.PacketConn) error {
 	id++
 	idLock.Unlock()
 	helloRq := packet{
-		typeRq: uint8(Hello),
-		id:     idHello,
-		body:   buf,
+		typ:  uint8(Hello),
+		id:   idHello,
+		body: buf,
 	}
+	knownPeersLock.Lock()
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
+	knownPeersLock.Unlock()
 
 	var rId uint32 = 0
 	var rType uint8 = 0
@@ -358,8 +392,11 @@ func serverRegistration(conn net.PacketConn) error {
 		}
 	}
 
+	knownPeersLock.Lock()
+	server = knownPeers[serverName]
 	server.handshakeMade = true
 	server.lastInteraction = time.Now()
+	knownPeersLock.Unlock()
 
 	// Key transfer
 	buf = make([]byte, 7+65536+64+1)
@@ -394,12 +431,19 @@ func serverRegistration(conn net.PacketConn) error {
 		}
 	}
 
+	knownPeersLock.Lock()
+	server = knownPeers[serverName]
 	server.key = buf[7 : 7+rLen]
+	knownPeersLock.Unlock()
+
+	formatted := make([]byte, 64)
+	publicKey.X.FillBytes(formatted[:32])
+	publicKey.Y.FillBytes(formatted[32:])
 
 	pkrPacket := packet{
-		typeRq: uint8(PublicKeyReply),
-		id:     rId,
-		body:   make([]byte, 0),
+		typ:  uint8(PublicKeyReply),
+		id:   rId,
+		body: formatted,
 	}
 
 	for rType != Root {
@@ -421,11 +465,10 @@ func serverRegistration(conn net.PacketConn) error {
 			if debug {
 				fmt.Println("Server indicates error")
 			}
-			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8 | uint16(bufr[6])]))
+			log.Fatal(string(bufr[7 : 7+uint16(bufr[5])<<8|uint16(bufr[6])]))
 		}
 		if rType == PublicKey {
-			pkrPacket.id = uint32(bufr[0])<<24 | uint32(bufr[1])<<16 |
-				uint32(bufr[2])<<8 | uint32(bufr[3])
+			pkrPacket.id, _ = toId(bufr[:4])
 		}
 	}
 
@@ -436,8 +479,11 @@ func serverRegistration(conn net.PacketConn) error {
 		}
 		rId, _ = toId(bufr[:4])
 		rLen = uint16(bufr[5])<<8 | uint16(bufr[6])
+		knownPeersLock.Lock()
+		server = knownPeers[serverName]
 		server.rootHash = bufr[7 : 7+rLen]
 		server.lastInteraction = time.Now()
+		knownPeersLock.Unlock()
 
 		var rootHash [32]byte
 		if root == nil {
@@ -446,9 +492,9 @@ func serverRegistration(conn net.PacketConn) error {
 			rootHash = root.hash
 		}
 		packetRoot := packet{
-			typeRq: uint8(RootReply),
-			id: rId,
-			body: rootHash[0:32],
+			typ:  uint8(RootReply),
+			id:   rId,
+			body: rootHash[:],
 		}
 		if debug {
 			fmt.Printf("Packet to send: %v\n", packetRoot.Bytes())
@@ -515,12 +561,14 @@ func sendKeepalive(conn net.PacketConn) error {
 		fmt.Println("Unlocked id")
 	}
 	keepaliveRq := packet{
-		typeRq: uint8(Hello),
-		id:     idKeepalive,
-		body:   buf,
+		typ:  uint8(Hello),
+		id:   idKeepalive,
+		body: buf,
 	}
+	knownPeersLock.Lock()
 	server := knownPeers[serverName]
 	addr := server.addrs[0]
+	knownPeersLock.Unlock()
 	if debug {
 		fmt.Println("Sending keepalive...")
 	}
@@ -534,6 +582,7 @@ func sendKeepalive(conn net.PacketConn) error {
 		}
 		_, err := getPeerSocketAddrs(peerName)
 		if err != nil {
+
 			return err
 		} else if debug {
 			fmt.Println("Client is still registered")
@@ -554,7 +603,10 @@ func sendKeepalive(conn net.PacketConn) error {
 			fmt.Println("Client is still registered")
 		}
 	} else {
+		knownPeersLock.Lock()
+		server = knownPeers[serverName]
 		server.lastInteraction = time.Now()
+		knownPeersLock.Unlock()
 		if debug {
 			fmt.Printf("Last interaction with server: %v\n",
 				server.lastInteraction)
@@ -612,8 +664,8 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 // is supposed to correspond to a uint32 value storid in NBO.
 func toId(bytes []byte) (uint32, error) {
 	l := len(bytes)
-	if l != IdLen {
-		return 0, fmt.Errorf("invalid slice length (%d), expected %d", l, IdLen)
+	if l != idLen {
+		return 0, fmt.Errorf("invalid slice length (%d), expected %d", l, idLen)
 	}
 	return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 | uint32(bytes[2])<<8 |
 		uint32(bytes[3]), nil
@@ -627,6 +679,7 @@ func isKnownPeer(addr *net.UDPAddr) (bool, error) {
 	}
 	for _, peer := range knownPeers {
 		if peer.has(addr) {
+			knownPeersLock.Unlock()
 			return true, nil
 		}
 	}
@@ -670,8 +723,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 	if len(buf) < 7 {
 		return fmt.Errorf(fname + ": packet received too small")
 	}
-	id := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 |
-		uint32(buf[3])
+	id, _ := toId(buf[:4])
 	l := uint16(buf[5])<<8 | uint16(buf[6])
 	switch buf[4] {
 	case Error, ErrorReply:
@@ -679,8 +731,63 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 	case Hello:
 		if debug {
 			fmt.Println("Handling Hello request")
+			fmt.Println("Checking format of message")
 		}
-		body := make([]byte, 4 + len(peerName))
+
+		if l < 5 {
+			if debug {
+				fmt.Println("Packet truncated -> ignore request")
+			}
+			return nil
+		}
+
+		name := string(buf[11 : 7+l])
+		knownPeersLock.Lock()
+		peer, prs := knownPeers[name]
+		if prs {
+			if debug {
+				fmt.Println("Peer " + name + " is known")
+			}
+			if peer.implementsSignatures() {
+				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					knownPeersLock.Unlock()
+					return nil
+				}
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+			if err := updateInteractionTime(addr); err != nil {
+				log.Fatal(fname, err)
+			}
+		} else {
+			if debug {
+				fmt.Println("Peer " + name + " is unknown")
+			}
+			addrs, key, rootHash, err := fetchInfoFor(name)
+			if err != nil {
+				return err
+			}
+			if !slices.Equal(key, make([]byte, 64)) {
+				if !checkSignature(buf[:7+l], buf[7+l:], key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					knownPeersLock.Unlock()
+					return nil
+				}
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+			knownPeers[name] = newKnownPeer(addrs, key, rootHash)
+			knownPeersLock.Unlock()
+		}
+
+		body := make([]byte, 4+len(peerName))
 		body = binary.BigEndian.AppendUint32(body, extensions)
 		body = append(body, peerName...)
 		resp := packet{HelloReply, id, body}
@@ -688,34 +795,45 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if err != nil {
 			log.Fatal(fname, err)
 		}
-		known, err := isKnownPeer(addr)
-		if err != nil {
-			log.Fatal(fname, err)
-		}
-		if known {
-			if err = updateInteractionTime(addr); err != nil {
-				log.Fatal(fname, err)
-			}
-		}
 		if debug {
 			fmt.Println("Sent HelloReply response")
 		}
-		// what to do if host is unknown ?
 		return nil
 	case PublicKey:
 		if debug {
 			fmt.Println("Handling PublicKey request")
 		}
+		knownPeersLock.Lock()
+		defer knownPeersLock.Unlock()
 		known, err := isKnownPeer(addr)
 		if err != nil {
 			log.Fatal(fname, err)
 		}
 		if !known {
+			knownPeersLock.Unlock()
 			return nil
 		}
+		name, peer, _ := getPeerWith(addr)
+
+		if peer.implementsSignatures() {
+			if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+				if debug {
+					fmt.Println("Signature invalid -> ignore request")
+				}
+				return nil
+			}
+			if debug {
+				fmt.Println("Signature of " + name + " checks out")
+			}
+		}
+
+		formatted := make([]byte, 64)
+		publicKey.X.FillBytes(formatted[:32])
+		publicKey.Y.FillBytes(formatted[32:])
 		resp := packet{
-			typeRq: PublicKeyReply,
-			id: id,
+			typ:  PublicKeyReply,
+			id:   id,
+			body: formatted,
 		}
 		_, err = conn.WriteTo(resp.Bytes(), addr)
 		if err != nil {
@@ -732,6 +850,8 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if debug {
 			fmt.Println("Handling Root request")
 		}
+		knownPeersLock.Lock()
+		defer knownPeersLock.Unlock()
 		known, err := isKnownPeer(addr)
 		if err != nil {
 			log.Fatal(fname, err)
@@ -739,12 +859,26 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if !known {
 			return nil
 		}
+
+		name, peer, _ := getPeerWith(addr)
+		if peer.implementsSignatures() {
+			if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+				if debug {
+					fmt.Println("Signature invalid -> ignore request")
+				}
+				return nil
+			}
+			if debug {
+				fmt.Println("Signature of " + name + " checks out")
+			}
+		}
+
 		var rootHash []byte
 		if root == nil {
 			tmp := sha256.Sum256([]byte(""))
-			rootHash = tmp[0:32]
+			rootHash = tmp[:]
 		} else {
-			rootHash = root.hash[0:32]
+			rootHash = root.hash[:]
 		}
 		resp := packet{RootReply, id, rootHash}
 		_, err = conn.WriteTo(resp.Bytes(), addr)
@@ -766,7 +900,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if !known {
 			return nil
 		}
-		hash := buf[7:7+l]
+		hash := buf[7 : 7+l]
 		resp := packet{NoDatum, id, hash}
 		_, err = conn.WriteTo(resp.Bytes(), addr)
 		if err != nil {
@@ -783,4 +917,38 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		fmt.Println(fname + ": Received packet of unknown type")
 	}
 	return nil
+}
+
+// Checks if the data was correctly signed
+func checkSignature(data, signature, key []byte) bool {
+	if debug {
+		fmt.Println("Checking signature...")
+	}
+	var x, y big.Int
+	x.SetBytes(key[:32])
+	y.SetBytes(key[32:])
+	publicKey := &ecdsa.PublicKey{
+		Curve: elliptic.P256(),
+		X:     &x,
+		Y:     &y,
+	}
+	var r, s big.Int
+	r.SetBytes(signature[:32])
+	s.SetBytes(signature[32:])
+	hashed := sha256.Sum256(data)
+	return ecdsa.Verify(publicKey, hashed[:], &r, &s)
+}
+
+// getPeerWith returns the name and the peer information of one of the peers
+// that have the given address.
+func getPeerWith(addr *net.UDPAddr) (string, *knownPeer, error) {
+	if addr == nil {
+		return "", nil, fmt.Errorf("invalid nil argument")
+	}
+	for name, peer := range knownPeers {
+		if peer.has(addr) {
+			return name, peer, nil
+		}
+	}
+	return "", nil, fmt.Errorf("peer with given address not found")
 }
