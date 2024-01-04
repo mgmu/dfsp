@@ -34,7 +34,8 @@ name string) (*node, error) {
 			err == nil {
 				if idr, _ := toId(bufr[0:4]); idr != idDatum {
 					go func() {
-						if err = handleRequest(bufr, addr, conn); err != nil {
+						_, err = handleRequest(bufr, addr, conn)
+						if err != nil {
 							log.Fatal(err)
 						}
 					}()
@@ -43,7 +44,7 @@ name string) (*node, error) {
 				if typeRq := int(bufr[4]); typeRq == NoDatum {
 					hashr := bufr[7:39]
 					if bytes.Equal(hashr, hash) {
-						return nil, errors.New("Peer does not have requested datum")
+						return nil, errors.New("Peer does not have datum")
 					} else {
 						return nil, errors.New("Peer answered with wrong hash")
 					}
@@ -156,7 +157,8 @@ name string) (*node, error) {
 					return nil, errors.New(string(bufr[7:7+lenr]))
 				} else {
 					go func() {
-						if err = handleRequest(bufr, addr, conn); err != nil {
+						_, err = handleRequest(bufr, addr, conn)
+						if err != nil {
 							log.Fatal(err)
 						}
 					}()
