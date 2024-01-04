@@ -598,6 +598,9 @@ func sendKeepalive(conn net.PacketConn) error {
 	if debug {
 		fmt.Println("Locked knownPeers")
 	}
+	if debug {
+		fmt.Println("Copying server addresses")
+	}
 	server := knownPeers[serverName]
 	addr := *server.addrs[0]
 	knownPeersLock.Unlock()
@@ -707,7 +710,6 @@ func isKnownPeer(addr *net.UDPAddr) (bool, error) {
 	}
 	for _, peer := range knownPeers {
 		if peer.has(addr) {
-			knownPeersLock.Unlock()
 			return true, nil
 		}
 	}
