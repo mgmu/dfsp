@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"log"
 	"os"
@@ -57,5 +58,20 @@ func TestNodeFromEmptyRegFileReturnsNodeWithHashOfEmptyString(t *testing.T) {
 	hash := sha256.Sum256([]byte(""))
 	if hash != nd.hash {
 		t.Fatalf("have %v; want %v", nd.hash, hash)
+	}
+}
+
+func TestNodeFromExistingExportFolder(t *testing.T) {
+	folder := "export"
+	nd, err := from(folder)
+	if err != nil {
+		t.Fatal("unexpected failure of node creation from export folder")
+	}
+	if nd.category != Directory {
+		t.Fatalf("category %d; want %d", nd.category, Directory)
+	}
+	expectedHash := hashFrom(nd.children, Directory)
+	if !bytes.Equal(nd.hash[:], expectedHash[:]) {
+		t.Fatalf("have %v; want %v", nd.hash, expectedHash)
 	}
 }
