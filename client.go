@@ -34,6 +34,7 @@ const (
 	limitExpBackoff = 32
 	idLen           = 4
 	pkeyFile        = "private.key"
+	natTraversalRequestTries = 3
 )
 
 var (
@@ -221,6 +222,9 @@ func main() {
 		log.Fatal("Reading stdin:", err)
 	}
 	fmt.Println("Exiting...")
+	if err = conn.Close(); err != nil {
+		log.Fatal("Close:", err)
+	}
 }
 
 func discoverPeers() {
@@ -456,7 +460,7 @@ func serverRegistration(conn net.PacketConn) error {
 		rId, _ = toId(bufr[:4])
 		if rId != helloRq.id {
 			go func() {
-				if err = handleRequest(bufr, addr, conn); err != nil {
+				if _, err = handleRequest(bufr, addr, conn); err != nil {
 					log.Fatal(err)
 				}
 			}()
@@ -688,7 +692,7 @@ func sendKeepalive(conn net.PacketConn) error {
 		rType := bufr[4]
 		if rType != HelloReply || rId != keepaliveRq.id {
 			go func() {
-				if err := handleRequest(bufr, &addr, conn); err != nil {
+				if _, err := handleRequest(bufr, &addr, conn); err != nil {
 					log.Fatal(err)
 				}
 			}()
@@ -803,16 +807,17 @@ func updateInteractionTime(addr *net.UDPAddr) error {
 }
 
 // handleRequest receives a buffer, an address and a connection and sends a
-// response, if needed, to the emitter of the received request. This function
-// is meant to be used in a separate thread to respond to an incoming
-// communication of different id than the current one
-func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
+// response, if needed, to the emitter of the received request. Returns true if
+// a response was sent, false if not, and a non nil error if something went
+// wrong.
+func handleRequest(buf []byte, addr *net.UDPAddr,
+	conn net.PacketConn) (bool, error) {
 	fname := "handleRequest"
 	if addr == nil {
-		return fmt.Errorf(fname + ": addr is nil")
+		return false, fmt.Errorf(fname + ": addr is nil")
 	}
 	if len(buf) < 7 {
-		return fmt.Errorf(fname + ": packet received too small")
+		return false, fmt.Errorf(fname + ": packet received too small")
 	}
 	id, _ := toId(buf[:4])
 	l := uint16(buf[5])<<8 | uint16(buf[6])
@@ -829,7 +834,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 			if debug {
 				fmt.Println("Packet truncated -> ignore request")
 			}
-			return nil
+			return false, nil
 		}
 
 		name := string(buf[11 : 7+l])
@@ -845,7 +850,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 						fmt.Println("Signature invalid -> ignore request")
 					}
 					knownPeersLock.Unlock()
-					return nil
+					return false, nil
 				}
 				if debug {
 					fmt.Println("Signature of " + name + " checks out")
@@ -860,7 +865,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 			}
 			addrs, key, rootHash, err := fetchInfoFor(name)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if !slices.Equal(key, make([]byte, 64)) {
 				if !checkSignature(buf[:7+l], buf[7+l:], key) {
@@ -868,7 +873,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 						fmt.Println("Signature invalid -> ignore request")
 					}
 					knownPeersLock.Unlock()
-					return nil
+					return false, nil
 				}
 				if debug {
 					fmt.Println("Signature of " + name + " checks out")
@@ -882,14 +887,18 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		body = binary.BigEndian.AppendUint32(body, extensions)
 		body = append(body, peerName...)
 		resp := packet{HelloReply, id, body}
-		_, err := conn.WriteTo(resp.Bytes(), addr)
+		data := resp.Bytes()
+		n, err := conn.WriteTo(data, addr)
+		if n != len(data) {
+			return false, nil
+		}
 		if err != nil {
 			log.Fatal(fname, err)
 		}
 		if debug {
 			fmt.Println("Sent HelloReply response")
 		}
-		return nil
+		return true, nil
 	case PublicKey:
 		if debug {
 			fmt.Println("Handling PublicKey request")
@@ -902,7 +911,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 		if !known {
 			knownPeersLock.Unlock()
-			return nil
+			return false, nil
 		}
 		name, peer, _ := getPeerWith(addr)
 
@@ -912,7 +921,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
 					}
-					return nil
+					return false, nil
 				}
 				if debug {
 					fmt.Println("Signature of " + name + " checks out")
@@ -938,7 +947,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 				fmt.Println("Sent PublicKeyReply response")
 			}
 		}
-		return nil
+		return true, nil
 	case Root:
 		if debug {
 			fmt.Println("Handling Root request")
@@ -950,7 +959,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 			log.Fatal(fname, err)
 		}
 		if !known {
-			return nil
+			return false, nil
 		}
 
 		name, peer, _ := getPeerWith(addr)
@@ -960,7 +969,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
 					}
-					return nil
+					return false, nil
 				}
 				if debug {
 					fmt.Println("Signature of " + name + " checks out")
@@ -986,7 +995,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		knownPeersLock.Lock()
 		updateInteractionTime(addr)
 		knownPeersLock.Unlock()
-		return nil
+		return true, nil
 	case GetDatum:
 		if debug {
 			fmt.Println("Handling GetDatum request")
@@ -996,13 +1005,13 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 			log.Fatal(fname, err)
 		}
 		if !known {
-			return nil
+			return false, nil
 		}
 		knownPeersLock.Lock()
 		_, peer, err := getPeerWith(addr)
 		knownPeersLock.Unlock()
 		if err != nil {
-			return err
+			return false, err
 		} else if peer.handshakeMade {
 			hash := buf[7 : 7+l]
 			resp := packet{NoDatum, id, hash}
@@ -1017,14 +1026,14 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		knownPeersLock.Lock()
 		updateInteractionTime(addr)
 		knownPeersLock.Unlock()
-		return nil
+		return true, nil
 	default:
-		return nil
+		return false, nil
 	}
 	if debug {
 		fmt.Println(fname + ": Received packet of unknown type")
 	}
-	return nil
+	return false, nil
 }
 
 // Checks if the data was correctly signed
@@ -1059,4 +1068,170 @@ func getPeerWith(addr *net.UDPAddr) (string, *knownPeer, error) {
 		}
 	}
 	return "", nil, fmt.Errorf("peer with given address not found")
+}
+
+func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
+	// addr is q
+	body := addrToBytes(addr)
+	if body == nil {
+		return fmt.Errorf("failed to build nat traversal request packet")
+	}
+	for i := 0; i < natTraversalRequestTries; i++ {
+		if debug {
+			fmt.Printf("Try #%d of nat traversal\n", i)
+		}
+		// send NTR to server
+		idLock.Lock()
+		if debug {
+			fmt.Println("Locking id")
+		}
+		idPack := id
+		id++
+		idLock.Unlock()
+		if debug {
+			fmt.Println("Unlocking id")
+		}
+		pack := packet{
+			typ: NatTraversalRequest,
+			id: idPack,
+			body: body,
+		}
+		data := pack.Bytes()
+		if debug {
+			fmt.Println("Sending nat traversal request")
+			fmt.Println("%v\n", data)
+		}
+		n, err := conn.WriteTo(data, addr)
+		if n != len(data) {
+			log.Fatal("packet truncated")
+		}
+		if err != nil {
+			log.Fatal("WriteTo:", err)
+		}
+
+		// wait a certain amount of time a hello from addr
+		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+		buf := make([]byte, 4+1+2+65536+1)
+		n, _, err = conn.ReadFrom(buf)
+		if n == len(buf) || n < minimalHelloPacketLength {
+			if debug {
+				fmt.Println("packet truncated")
+			}
+			continue
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			}
+			// if deadline exceeded, try again
+			continue
+		}
+		idBuf, _ := toId(buf[:4])
+		if pack.id != idBuf || buf[5] != Hello {
+			go func() {
+				if _, err = handleRequest(buf, addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			continue
+		}
+		ok, err := handleRequest(buf, addr, conn)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !ok {
+			continue
+		}
+		length := uint16(buf[5])<<8 | uint16(buf[6])
+		name := string(buf[11: 11+length])
+		
+		// wait a little bit to let addr verify our signature if needed
+		time.Sleep(time.Second)
+		
+		// send a hello to addr
+		buf = make([]byte, 4 + len(peerName))
+		buf = binary.BigEndian.AppendUint32(buf, extensions)
+		buf = append(buf, peerName...)
+		idLock.Lock()
+		idPack = id
+		id++
+		idLock.Unlock()
+		pack = packet{
+			typ:  Hello,
+			id:   idPack,
+			body: buf,
+		}
+		data = pack.Bytes()
+		n, err = conn.WriteTo(data, addr)
+		if n != len(data) {
+			log.Fatal("packet truncated")
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		
+		// wait a certain amount of time the hello reply
+		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+		buf = make([]byte, 4+1+2+65536+1)
+		n, _, err = conn.ReadFrom(buf)
+		if n == len(buf) || n < minimalHelloPacketLength {
+			if debug {
+				fmt.Println("packet truncated")
+			}
+			continue
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			}
+			// if deadline exceeded, try again
+			continue
+		}
+
+		idBuf, _ = toId(buf[:4])
+		if pack.id != idBuf || buf[5] != Hello {
+			go func() {
+				if _, err = handleRequest(buf, addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			continue
+		}
+
+		length = uint16(buf[5])<<8 | uint16(buf[6])
+		knownPeersLock.Lock()
+		peer := knownPeers[name]
+		if peer.implementsSignatures() {
+			if !checkSignature(buf[:7+length], buf[7+length:], peer.key) {
+				if debug {
+					fmt.Println("Signature invalid -> ignore request")
+				}
+				knownPeersLock.Unlock()
+				continue
+			}
+			if debug {
+				fmt.Println("Signature of " + name + " checks out")
+			}
+		}
+		if err = updateInteractionTime(addr); err != nil {
+			log.Fatal(err)
+		}
+		knownPeersLock.Unlock()
+		return nil
+	}
+	return fmt.Errorf("Failed NAT traversal")
+}
+
+func handleNatTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
+	// addr is p
+	if debug {
+		fmt.Println("handleNatTraversalRequest: TODO")
+	}
+	return nil
 }

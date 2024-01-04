@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 	RootReply      = 131
 	Datum          = 132
 	NoDatum        = 133
+	minimalHelloPacketLength = 12
 )
 
 type packet struct {
@@ -42,18 +44,11 @@ func (pack *packet) Bytes() []byte {
 	res = append(res, pack.body...)
 	switch pack.typ {
 	case Hello, HelloReply, PublicKey, PublicKeyReply, Root, RootReply:
+		if debug {
+			fmt.Println("Computing signature of packet...")
+		}
 		tmp := Signature(res[:7+length])
-		if debug {
-			fmt.Println("Debug: bytes of signature")
-			fmt.Println(tmp)
-			fmt.Println("Debug: bytes of packet before signature append")
-			fmt.Println(res)
-		}
 		res = append(res, tmp...)
-		if debug {
-			fmt.Println("Debug: bytes of packet after signature append")
-			fmt.Println(res)
-		}
 	}
 	return res
 }
@@ -74,6 +69,10 @@ func (pack *packet) Length() uint16 {
 		return 32
 	case NoDatum:
 		return 32 + uint16(len(pack.body))
+	case NatTraversalRequest:
+		return 6
+	case NatTraversal:
+		return 18
 	}
 	return 0
 }
@@ -91,4 +90,16 @@ func Signature(data []byte) []byte {
 	r.FillBytes(signature[:32])
 	s.FillBytes(signature[32:])
 	return signature
+}
+
+// addrToBytes returns the slice of bytes corresponding to the concatenation of
+// the ip address and the port number (in NBO order). Returns nil on error.
+func addrToBytes(addr *net.UDPAddr) []byte {
+	if addr == nil {
+		return nil
+	}
+	res := addr.IP
+	port := uint16(addr.Port)
+	res = binary.BigEndian.AppendUint16(res, port)
+	return res
 }
