@@ -595,9 +595,15 @@ func sendKeepalive(conn net.PacketConn) error {
 		body: buf,
 	}
 	knownPeersLock.Lock()
+	if debug {
+		fmt.Println("Locked knownPeers")
+	}
 	server := knownPeers[serverName]
 	addr := *server.addrs[0]
 	knownPeersLock.Unlock()
+	if debug {
+		fmt.Println("Unlocked knownPeers")
+	}
 	if debug {
 		fmt.Println("Sending keepalive...")
 	}
@@ -627,9 +633,7 @@ func sendKeepalive(conn net.PacketConn) error {
 			}()
 			continue
 		} else {
-			knownPeersLock.Lock()
 			updateInteractionTime(&addr)
-			knownPeersLock.Unlock()
 			if debug {
 				fmt.Printf("Last interaction with server: %v\n",
 					server.lastInteraction)
