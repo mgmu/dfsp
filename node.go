@@ -2,9 +2,11 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 const (
@@ -92,7 +94,7 @@ func from(name string) (*node, error) {
 			}
 			new := &node{
 				category: BigFile,
-				hash: hashFrom(childs),
+				hash: hashFrom(childs, BigFile),
 				children: childs,
 				name: name,
 			}
@@ -154,7 +156,7 @@ func from(name string) (*node, error) {
 		}
 		new := &node{
 			category: Directory,
-			hash: hashFrom(children),
+			hash: hashFrom(children, Directory),
 			children: children,
 			name: name,
 		}
@@ -167,10 +169,87 @@ func from(name string) (*node, error) {
 }
 
 // Computes the hash of the concatenation of the hashes of the nodes in children
-func hashFrom(children []*node) [32]byte {
+func hashFrom(children []*node, category byte) [32]byte {
 	var hashes []byte
+	hashes = append(hashes, []byte{category}...)
 	for i := 0; i < len(children); i++ {
+		if children[i].name != "" {
+			hashes = append(hashes, []byte(children[i].name)...)
+		}
 		hashes = append(hashes, children[i].hash[0: 32]...)
 	}
 	return sha256.Sum256(hashes)
+}
+
+// Writes the data contained in the node on the disk at given path.
+// If an error occurs, returns it.
+func (n *node) Write(path string) error {
+	var buf []byte
+	filename := strings.ReplaceAll(path + n.name, "\x00", "")
+	if n.category == Chunk {
+		buf = append(buf, n.data...)
+		if n.name != "" {
+			f, err := os.Create(filename)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Created file %s\n", f.Name())
+			}
+			defer f.Close()
+			if _, err := f.Write(buf); err != nil {
+				return err
+			}
+		}
+	} else if n.category == BigFile {
+		if n.name != "" {
+			f, err := os.Create(filename)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Created file %s\n", f.Name())
+			}
+			defer f.Close()
+			children := n.children
+			for len(children) > 0 {
+				if children[0].category == Chunk {
+					buf = append(buf, children[0].data...)
+					children = children[1:]
+				} else {
+					children = append(children[0].children, children[1:]...)
+				}
+			}
+			if _, err := f.Write(buf); err != nil {
+				return err
+			} else if debug {
+				fmt.Printf("Wrote %d bytes in file %s\n", len(buf), f.Name())
+			}
+		}
+	} else if n.category == Directory {
+		if filename != "" {
+			if err := os.Mkdir(filename, 0755); err != nil {
+				if debug && os.IsExist(err) {
+					fmt.Printf("Directory %s already exists\n", filename)
+				} else {
+					return err
+				}
+			} else if debug {
+				fmt.Printf("Created directory %s\n", filename)
+			}
+		}
+		children := n.children
+		if debug {
+			fmt.Printf("Writing %d children of %s\n", len(children), n.name)
+		}
+		for len(children) > 0 {
+			if err := children[0].Write(filename + "/"); err != nil {
+				return err
+			} else if debug {
+				fmt.Println("Wrote child")
+			}
+			children = children[1:]
+		}
+	} else {
+		return errors.New("node.Write(): unknown node category")
+	}
+	return nil
 }

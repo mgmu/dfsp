@@ -89,10 +89,7 @@ func main() {
 	}
 
 	// send keepalive periodically
-	var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		for {
 			time.Sleep(30 * time.Second)
 			errKeepalive := sendKeepalive(conn)
@@ -116,7 +113,39 @@ func main() {
 		} else {
 			switch input {
 			case "d":
-				log.Fatal("todo")
+				fmt.Println("Enter peer name & optionally hash:")
+				scanner.Scan()
+				input := strings.Split(scanner.Text(), " ")
+				peer := input[0]
+				if knownPeers[peer] == nil {
+					fmt.Println("Unknown peer.")
+				} else {
+					hashString := ""
+					if len(input) > 1 {
+						hashString = input[1]
+					} 
+					hash := []byte(hashString)
+					if hashString == "" {
+						hash = knownPeers[peer].rootHash
+					}
+					if len(hash) == 32 {
+						n, err := getDatum(peer, hash, conn, "data")
+						if err != nil {
+							fmt.Println(err)
+						} else {
+							if debug {
+								fmt.Println("Beginning write")
+							}
+							if err := n.Write("./"); err != nil {
+								fmt.Printf("Error writing: %v\n", err)
+							} else if debug {
+								fmt.Println("Write done")
+							}
+						}
+					} else {
+						fmt.Println("Error: hash must be 32 bytes long.")
+					}
+				}
 			case "p":
 				knownPeersLock.Lock()
 				for k, v := range knownPeers {
@@ -376,7 +405,7 @@ func serverRegistration(conn net.PacketConn) error {
 			continue
 		}
 		rType = bufr[4]
-		rLen = uint16(bufr[5]<<8) | uint16(bufr[6])
+		rLen = uint16(bufr[5])<<8 | uint16(bufr[6])
 		if rType == NoOp || rType != HelloReply {
 			if debug {
 				fmt.Println("Server sent correct id but wrong type")
@@ -566,53 +595,55 @@ func sendKeepalive(conn net.PacketConn) error {
 		body: buf,
 	}
 	knownPeersLock.Lock()
+	if debug {
+		fmt.Println("Locked knownPeers")
+	}
+	if debug {
+		fmt.Println("Copying server addresses")
+	}
 	server := knownPeers[serverName]
-	addr := server.addrs[0]
+	addr := *server.addrs[0]
 	knownPeersLock.Unlock()
+	if debug {
+		fmt.Println("Unlocked knownPeers")
+	}
 	if debug {
 		fmt.Println("Sending keepalive...")
 	}
-	bufr, err := writeExpBackoff(conn, addr, keepaliveRq.Bytes())
-	if debug {
-		fmt.Printf("Server response to keepalive = %v\n", bufr)
-	}
-	if err != nil {
+	for {
+		bufr, err := writeExpBackoff(conn, &addr, keepaliveRq.Bytes())
 		if debug {
-			fmt.Println("Error in keepalive sending, checking registration")
+			fmt.Printf("Server response to keepalive = %v\n", bufr)
 		}
-		_, err := getPeerSocketAddrs(peerName)
 		if err != nil {
-
-			return err
-		} else if debug {
-			fmt.Println("Client is still registered")
+			if debug {
+				fmt.Println("Error in keepalive sending, checking registration")
+			}
+			_, err := getPeerSocketAddrs(peerName)
+			if err != nil {
+				return err
+			} else if debug {
+				fmt.Println("Client is still registered")
+			}
+		}
+		rId, _ := toId(bufr[:4])
+		rType := bufr[4]
+		if rType != HelloReply || rId != keepaliveRq.id {
+			go func() {
+				if err := handleRequest(bufr, &addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			continue
+		} else {
+			updateInteractionTime(&addr)
+			if debug {
+				fmt.Printf("Last interaction with server: %v\n",
+					server.lastInteraction)
+			}
+			return nil
 		}
 	}
-	rId, _ := toId(bufr[:4])
-	rType := bufr[4]
-	if rType == ErrorReply ||
-		rType != HelloReply ||
-		rId != keepaliveRq.id {
-		if debug {
-			fmt.Println("Error in response, checking registration...")
-		}
-		_, err := getPeerSocketAddrs(peerName)
-		if err != nil {
-			return err
-		} else if debug {
-			fmt.Println("Client is still registered")
-		}
-	} else {
-		knownPeersLock.Lock()
-		server = knownPeers[serverName]
-		server.lastInteraction = time.Now()
-		knownPeersLock.Unlock()
-		if debug {
-			fmt.Printf("Last interaction with server: %v\n",
-				server.lastInteraction)
-		}
-	}
-	return nil
 }
 
 // Writes to the given socket the given data destined to the given address and
@@ -652,7 +683,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
-			length := (buf[5] << 8) | buf[6]
+			length := uint16(buf[5]) << 8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
 	}
@@ -679,7 +710,6 @@ func isKnownPeer(addr *net.UDPAddr) (bool, error) {
 	}
 	for _, peer := range knownPeers {
 		if peer.has(addr) {
-			knownPeersLock.Unlock()
 			return true, nil
 		}
 	}
