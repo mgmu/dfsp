@@ -109,7 +109,8 @@ name string) (*node, error) {
 					}
 					hashr := bufr[7:39]
 					if bytes.Equal(hashr, hash) {
-						return nil, errors.New("Peer does not have datum")
+						return nil, 
+							errors.New("Peer does not have requested datum")
 					} else {
 						return nil, errors.New("Peer answered with wrong hash")
 					}

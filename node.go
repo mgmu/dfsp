@@ -331,3 +331,30 @@ func (n *node) Write(path string) error {
 	}
 	return nil
 }
+
+// Gets the node corresponding to the given hash in the children of the current
+// node, or the current node itself. Returns error if any occurs.
+func (n *node) GetNode(hash [32]byte) (*node, error) {
+	if debug {
+		fmt.Printf("GetNode(): hash %v\n", hash)
+	}
+	notFound := errors.New("Hash not found")
+	if n.hash == hash {
+		return n, nil
+	} else if n.category == Chunk {
+		return nil, notFound
+	} else {
+		children := n.children
+		for len(children) > 0 {
+			if children[0].hash == hash {
+				return children[0], nil
+			} else if children[0].category == BigFile ||
+				children[0].category == Directory {
+				children = append(children[0].children, children[1:]...)
+			} else {
+				children = children[1:]
+			}
+		}
+		return nil, notFound
+	}
+}

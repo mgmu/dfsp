@@ -9,3 +9,6 @@ data
 
 # Private key
 private.key
+
+# Files we might export
+export
