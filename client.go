@@ -1138,17 +1138,44 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		knownPeersLock.Lock()
 		_, peer, err := getPeerWith(addr)
 		knownPeersLock.Unlock()
-		if err != nil {
-			return false, err
-		} else if peer.handshakeMade {
-			hash := buf[7 : 7+l]
-			resp := packet{NoDatum, id, hash}
+
+		if peer.handshakeMade {
+			var resp packet
+			var hash [32]byte
+			
+			copy(hash[:], buf[7 : 7+l])
+			node, err := root.GetNode(hash)
+			if err != nil {
+				if debug {
+					fmt.Println("Sending NoDatum response")
+				}
+				resp = packet{NoDatum, id, hash[:]}
+			} else {
+				if debug {
+					fmt.Println("Sending Datum response")
+				}
+				var body []byte
+				body = append(body, node.category)
+				switch node.category {
+				case Chunk:
+					body = append(body, hash[:]...)
+					body = append(body, node.data...)
+				case BigFile:
+					for _, child := range node.children {
+						body = append(body, child.hash[:]...)
+					}
+				case Directory:
+					for _, child := range node.children {
+						body = append(body, []byte(child.name)...)
+						body = append(body, child.hash[:]...)
+					}
+				default:
+					log.Fatal("handleRequest: unknown node category")
+				}
+			}
 			_, err = conn.WriteTo(resp.Bytes(), addr)
 			if err != nil {
-				log.Fatal(fname, err)
-			}
-			if debug {
-				fmt.Println("Sent NoDatum response")
+				return false, err
 			}
 		}
 		knownPeersLock.Lock()
