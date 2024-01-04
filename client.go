@@ -63,7 +63,7 @@ func main() {
 	}
 
 	if len(os.Args) == 2 {
-		tmp, err := from(os.Args[1])
+		tmp, err := fromExistingFile(os.Args[1])
 		if err != nil {
 			log.Fatal(err)
 		}

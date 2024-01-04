@@ -9,7 +9,7 @@ import (
 )
 
 func TestNodeFromUnexistingFileReturnsError(t *testing.T) {
-	_, err := from("notafile")
+	_, err := fromExistingFile("notafile")
 	if err == nil {
 		t.Fatal("unexpected success of node creation from not existing file")
 	}
@@ -21,7 +21,7 @@ func TestNodeFromEmptyRegularFileDoesNotReturnsError(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	_, err = from(f.Name())
+	_, err = fromExistingFile(f.Name())
 	if err != nil {
 		t.Fatal("unexpected failure of node creation from empty regular file")
 	}
@@ -29,7 +29,7 @@ func TestNodeFromEmptyRegularFileDoesNotReturnsError(t *testing.T) {
 
 func TestNodeFromEmptyRegFileReturnsNonNilNode(t *testing.T) {
 	f, err := os.CreateTemp("", "test")
-	nd, err := from(f.Name())
+	nd, err := fromExistingFile(f.Name())
 	if err != nil {
 		t.Fatal("unexpected failure of node creation from empty regular file")
 	}
@@ -40,7 +40,7 @@ func TestNodeFromEmptyRegFileReturnsNonNilNode(t *testing.T) {
 
 func TestNodeFromEmptyRegFileReturnsNodeOfCategory0(t *testing.T) {
 	f, err := os.CreateTemp("", "test")
-	nd, err := from(f.Name())
+	nd, err := fromExistingFile(f.Name())
 	if err != nil {
 		t.Fatal("unexpected failure of node creation from empty regular file")
 	}
@@ -51,7 +51,7 @@ func TestNodeFromEmptyRegFileReturnsNodeOfCategory0(t *testing.T) {
 
 func TestNodeFromEmptyRegFileReturnsNodeWithHashOfEmptyString(t *testing.T) {
 	f, err := os.CreateTemp("", "test")
-	nd, err := from(f.Name())
+	nd, err := fromExistingFile(f.Name())
 	if err != nil {
 		t.Fatal("unexpected failure of node creation from empty regular file")
 	}
@@ -63,7 +63,7 @@ func TestNodeFromEmptyRegFileReturnsNodeWithHashOfEmptyString(t *testing.T) {
 
 func TestNodeFromExistingExportFolder(t *testing.T) {
 	folder := "export"
-	nd, err := from(folder)
+	nd, err := fromExistingFile(folder)
 	if err != nil {
 		t.Fatal("unexpected failure of node creation from export folder")
 	}
