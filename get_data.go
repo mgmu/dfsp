@@ -32,9 +32,12 @@ name string) (*node, error) {
 	packetDatum := packet{GetDatum, idDatum, hash}
 
 	knownPeersLock.Lock()
-	for !knownPeers[peer].handshakeMade {
+	if debug {
+		fmt.Println("Locked knownPeers")
+	}
+	for i := 0; i < 5 && !knownPeers[peer].handshakeMade; i++ {
 		if debug {
-			fmt.Printf("Handshake with peer %s\n", peer)
+			fmt.Printf("Try #%d handshake with peer %s\n", i, peer)
 		}
 		var bufHello []byte
 		bufHello = binary.BigEndian.AppendUint32(bufHello, extensions)
@@ -49,9 +52,19 @@ name string) (*node, error) {
 			body: bufHello,
 		}
 		addr := knownPeers[peer].addrs[0]
-		if bufr, err := writeExpBackoff(conn,addr, helloRq.Bytes());
-		err == nil {
+		if debug {
+			fmt.Println("About to send hello packet")
+		}
+		bufr, err := writeExpBackoff(conn,addr, helloRq.Bytes())
+		if err == nil {
+			if debug {
+				fmt.Println("no error")
+			}
 			if idr, _ := toId(bufr[0:4]); idr != idHello {
+				if debug {
+					fmt.Printf("id request %v id expected %v\n", idr, idHello)
+					fmt.Println("ids differ -> try again and handle request")
+				}
 				go func() {
 					if _, err = handleRequest(bufr, addr, conn); err != nil {
 						log.Fatal(err)
@@ -66,6 +79,9 @@ name string) (*node, error) {
 				updateInteractionTime(addr)
 			}
 		} else {
+			if debug {
+				fmt.Println("an error occured, exiting...")
+			}
 			knownPeersLock.Unlock()
 			return nil, err
 		}
