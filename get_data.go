@@ -28,11 +28,26 @@ name string) (*node, error) {
 		fmt.Println("Unlocked id")
 	}
 	packet := packet{GetDatum, idDatum, hash}
-	for _, addr := range knownPeers[peer].addrs {
+	for i, addr := range knownPeers[peer].addrs {
+		if debug {
+			fmt.Printf("Try with address #%d\n", i)
+		}
 		for {
-			if bufr, err := writeExpBackoff(conn, addr, packet.Bytes());
-			err == nil {
+			if debug {
+				fmt.Println("Start of loop")
+			}
+			bufr, err := writeExpBackoff(conn, addr, packet.Bytes())
+			if debug {
+				fmt.Println("writeExpBackoff finished")
+			}
+			if err == nil {
+				if debug {
+					fmt.Println("no error")
+				}
 				if idr, _ := toId(bufr[0:4]); idr != idDatum {
+					if debug {
+						fmt.Println("ids differ")
+					}
 					go func() {
 						_, err = handleRequest(bufr, addr, conn)
 						if err != nil {
@@ -42,6 +57,9 @@ name string) (*node, error) {
 					continue
 				}
 				if typeRq := int(bufr[4]); typeRq == NoDatum {
+					if debug {
+						fmt.Println("no datum")
+					}
 					hashr := bufr[7:39]
 					if bytes.Equal(hashr, hash) {
 						return nil, errors.New("Peer does not have datum")
@@ -49,6 +67,9 @@ name string) (*node, error) {
 						return nil, errors.New("Peer answered with wrong hash")
 					}
 				} else if typeRq == Datum {
+					if debug {
+						fmt.Println("datum")
+					}
 					lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
 					hashr, valuer := bufr[7:39], bufr[39:39 + lenr - 32]
 					if !bytes.Equal(hashr, hash) {
@@ -59,6 +80,9 @@ name string) (*node, error) {
 						continue
 					} else if debug {
 						fmt.Printf("Peer %s has datum %v\n", peer, hashr)
+					}
+					if debug {
+						fmt.Println("hash of datum matches")
 					}
 					categoryDatum, valueDatum := int(valuer[0]), valuer[1:]
 					var n *node

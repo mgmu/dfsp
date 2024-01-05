@@ -31,7 +31,7 @@ const (
 	addressesUrl             = "/addresses"
 	keyUrl                   = "/key"
 	rootHashUrl              = "/root"
-	peerName                 = "Slartibartfast"
+	peerName                 = "ford"
 	limitExpBackoff          = 32
 	idLen                    = 4
 	natTraversalRequestTries = 3
@@ -102,6 +102,47 @@ func main() {
 				if err = serverRegistration(conn); err != nil {
 					log.Fatal("Could not register to server: ", err)
 				}
+			}
+		}
+	}()
+
+	// listen for requests
+	go func() {
+		for {
+			if debug {
+				fmt.Println("Listening...")
+			}
+			buf := make([]byte, 4 + 1 + 2 + 65536 + 1)
+			err = conn.SetReadDeadline((time.Now()).Add(time.Minute))
+			if err != nil {				
+				fmt.Println(err)
+			}
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					if debug {
+						fmt.Println("listen thread failed")
+					}
+					log.Fatal("ReadFrom:", err)
+				}
+				continue
+			}
+			if n == len(buf) || n < 7 {
+				if debug {
+					fmt.Println("packet truncated")
+				}
+				continue
+			}
+			udpAddr, err := net.ResolveUDPAddr(addr.Network(), addr.String())
+			if err != nil {
+				if debug {
+					fmt.Println(err)
+				}
+				continue
+			}
+			_, err = handleRequest(buf[:n], udpAddr, conn)
+			if debug {
+				fmt.Println("Handled request from listening thread")
 			}
 		}
 	}()
@@ -630,6 +671,7 @@ func sendKeepalive(conn net.PacketConn) error {
 			} else if debug {
 				fmt.Println("Client is still registered")
 			}
+			return nil
 		}
 		rId, _ := toId(bufr[:4])
 		rType := bufr[4]
@@ -663,10 +705,19 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 	var buf []byte
 	buf = make([]byte, 7+65536+64+1) // + 1 for truncation check
 	for wait < limitExpBackoff {
+		if debug {
+			fmt.Printf("write sleep for %d seconds\n", wait)
+		}
 		time.Sleep(time.Duration(wait) * time.Second)
+		if debug {
+			fmt.Println("done sleeping")
+		}
 		_, err := conn.WriteTo(data, addr)
 		if err != nil {
 			log.Fatal("WriteTo:", err)
+		}
+		if debug {
+			fmt.Println("sent packet")
 		}
 
 		err = conn.SetReadDeadline((time.Now()).Add(2 * time.Second))
@@ -675,6 +726,10 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 		}
 
 		n, _, err := conn.ReadFrom(buf)
+		if debug {
+			fmt.Println("read packet")
+		}
+
 		if n == len(buf) {
 			log.Fatal("Peer packet exceeded maximum length")
 		}
@@ -688,6 +743,10 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
+			if debug {
+				fmt.Println("returning received packet")
+			}
+			
 			length := uint16(buf[5])<<8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
