@@ -28,6 +28,7 @@ name string) (*node, error) {
 	if debug {
 		fmt.Println("Unlocked id")
 	}
+
 	packetDatum := packet{GetDatum, idDatum, hash}
 
 	knownPeersLock.Lock()
@@ -52,7 +53,7 @@ name string) (*node, error) {
 		err == nil {
 			if idr, _ := toId(bufr[0:4]); idr != idHello {
 				go func() {
-					if err = handleRequest(bufr, addr, conn); err != nil {
+					if _, err = handleRequest(bufr, addr, conn); err != nil {
 						log.Fatal(err)
 					}
 				}()
@@ -75,21 +76,31 @@ name string) (*node, error) {
 			if bufr, err := writeExpBackoff(conn, addr, packetDatum.Bytes());
 			err == nil {
 				if idr, _ := toId(bufr[0:4]); idr != idDatum {
+					if debug {
+						fmt.Println("ids differ")
+					}
 					go func() {
-						if err = handleRequest(bufr, addr, conn); err != nil {
+						_, err = handleRequest(bufr, addr, conn)
+						if err != nil {
 							log.Fatal(err)
 						}
 					}()
 					continue
 				}
 				if typeRq := int(bufr[4]); typeRq == NoDatum {
+					if debug {
+						fmt.Println("no datum")
+					}
 					hashr := bufr[7:39]
 					if bytes.Equal(hashr, hash) {
-						return nil, errors.New("Peer does not have requested datum")
+						return nil, errors.New("Peer does not have datum")
 					} else {
 						return nil, errors.New("Peer answered with wrong hash")
 					}
 				} else if typeRq == Datum {
+					if debug {
+						fmt.Println("datum")
+					}
 					lenr := uint16(bufr[5]) << 8 | uint16(bufr[6])
 					hashr, valuer := bufr[7:39], bufr[39:39 + lenr - 32]
 					if !bytes.Equal(hashr, hash) {
@@ -100,6 +111,9 @@ name string) (*node, error) {
 						continue
 					} else if debug {
 						fmt.Printf("Peer %s has datum %v\n", peer, hashr)
+					}
+					if debug {
+						fmt.Println("hash of datum matches")
 					}
 					categoryDatum, valueDatum := int(valuer[0]), valuer[1:]
 					var n *node
@@ -198,7 +212,8 @@ name string) (*node, error) {
 					return nil, errors.New(string(bufr[7:7+lenr]))
 				} else {
 					go func() {
-						if err = handleRequest(bufr, addr, conn); err != nil {
+						_, err = handleRequest(bufr, addr, conn)
+						if err != nil {
 							log.Fatal(err)
 						}
 					}()
