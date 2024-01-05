@@ -741,7 +741,9 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
+			knownPeersLock.Lock()
 			updateInteractionTime(addr)
+			knownPeersLock.Unlock()
 			length := uint16(buf[5]) << 8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
@@ -981,7 +983,9 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 				fmt.Println("Sent RootReply response")
 			}
 		}
+		knownPeersLock.Lock()
 		updateInteractionTime(addr)
+		knownPeersLock.Unlock()
 		return nil
 	case GetDatum:
 		if debug {
@@ -994,7 +998,9 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if !known {
 			return nil
 		}
+		knownPeersLock.Lock()
 		_, peer, err := getPeerWith(addr)
+		knownPeersLock.Unlock()
 		if err != nil {
 			return err
 		} else if peer.handshakeMade {
@@ -1008,7 +1014,9 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 				fmt.Println("Sent NoDatum response")
 			}
 		}
+		knownPeersLock.Lock()
 		updateInteractionTime(addr)
+		knownPeersLock.Unlock()
 		return nil
 	default:
 		return nil

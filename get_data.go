@@ -30,6 +30,7 @@ name string) (*node, error) {
 	}
 	packetDatum := packet{GetDatum, idDatum, hash}
 
+	knownPeersLock.Lock()
 	for !knownPeers[peer].handshakeMade {
 		if debug {
 			fmt.Printf("Handshake with peer %s\n", peer)
@@ -60,15 +61,15 @@ name string) (*node, error) {
 				if debug {
 					fmt.Printf("Handshake with %s done\n", peer)
 				}
-				knownPeersLock.Lock()
 				knownPeers[peer].handshakeMade = true
 				updateInteractionTime(addr)
-				knownPeersLock.Unlock()
 			}
 		} else {
+			knownPeersLock.Unlock()
 			return nil, err
 		}
 	}
+	knownPeersLock.Unlock()
 	for _, addr := range knownPeers[peer].addrs {
 		for {
 			if bufr, err := writeExpBackoff(conn, addr, packetDatum.Bytes());
