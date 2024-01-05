@@ -52,6 +52,7 @@ var (
 	}
 	privateKey *ecdsa.PrivateKey = nil
 	publicKey  *ecdsa.PublicKey  = nil
+	enable                       = true
 )
 
 func main() {
@@ -108,13 +109,13 @@ func main() {
 
 	// listen for requests
 	go func() {
-		for {
+		for enable {
 			if debug {
 				fmt.Println("Listening...")
 			}
-			buf := make([]byte, 4 + 1 + 2 + 65536 + 1)
+			buf := make([]byte, 4+1+2+65536+1)
 			err = conn.SetReadDeadline((time.Now()).Add(time.Minute))
-			if err != nil {				
+			if err != nil {
 				fmt.Println(err)
 			}
 			n, addr, err := conn.ReadFrom(buf)
@@ -172,6 +173,7 @@ func main() {
 						hash = knownPeers[peer].rootHash
 					}
 					if len(hash) == 32 {
+						enable = false
 						n, err := getDatum(peer, hash, conn, "data")
 						if err != nil {
 							fmt.Println(err)
@@ -185,6 +187,7 @@ func main() {
 								fmt.Println("Write done")
 							}
 						}
+						enable = true
 					} else {
 						fmt.Println("Error: hash must be 32 bytes long.")
 					}
@@ -746,7 +749,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 			if debug {
 				fmt.Println("returning received packet")
 			}
-			
+
 			length := uint16(buf[5])<<8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
