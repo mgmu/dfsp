@@ -33,6 +33,7 @@ const (
 	peerName        = "Slartibartfast"
 	limitExpBackoff = 32
 	idLen           = 4
+	pkeyFile        = "private.key"
 )
 
 var (
@@ -74,15 +75,64 @@ func main() {
 		log.Fatal("net.ListenPacket:", err)
 	}
 
-	privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		log.Fatal("ecdsa.GenerateKey:", err)
+	if f, err := os.Open(pkeyFile); err == nil {
+		if debug {
+			fmt.Printf("Reading private key from %s\n", pkeyFile)
+		}
+		var priv, pubX, pubY big.Int
+		buf := make([]byte, 3*32)
+		_, err := f.Read(buf)
+		if err != nil {
+			log.Fatal("f.Read:", err)
+		}
+		priv = *big.NewInt(0).SetBytes(buf[:32])
+		pubX = *big.NewInt(0).SetBytes(buf[32:64])
+		pubY = *big.NewInt(0).SetBytes(buf[64:96])
+		publicKey = &ecdsa.PublicKey{
+			Curve: elliptic.P256(),
+			X: &pubX,
+			Y: &pubY,
+		}
+		privateKey = &ecdsa.PrivateKey{
+			PublicKey: *publicKey,
+			D: &priv,
+		}
+		if f.Close() != nil {
+			log.Fatal("f.Close:", err)
+		}
+	} else if os.IsNotExist(err) {
+		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			log.Fatal("ecdsa.GenerateKey:", err)
+		}
+		tmp, ok := privateKey.Public().(*ecdsa.PublicKey)
+		if !ok {
+			log.Fatal("failed to get public key from private key")
+		}
+		publicKey = tmp
+	
+		if f, err := os.Create(pkeyFile); err == nil {
+			if debug {
+				fmt.Printf("Writing private key to %s\n", pkeyFile)
+			}
+			priv := privateKey.D.Bytes()
+			pubX, pubY := privateKey.X.Bytes(), privateKey.Y.Bytes()
+			buf := make([]byte, 0)
+			buf = append(buf, priv...)
+			buf = append(buf, pubX...)
+			buf = append(buf, pubY...)
+			if _, err := f.Write(buf); err != nil {
+				log.Fatal("f.Write:", err)
+			}
+			if f.Close() != nil {
+				log.Fatal("f.Close:", err)
+			}
+		} else {
+			log.Fatal("os.Create:", err)
+		}
+	} else {
+		log.Fatal("os.Open:", err)
 	}
-	tmp, ok := privateKey.Public().(*ecdsa.PublicKey)
-	if !ok {
-		log.Fatal("failed to get public key from private key")
-	}
-	publicKey = tmp
 
 	if err = serverRegistration(conn); err != nil {
 		log.Fatal("Could not register to server: ", err)
