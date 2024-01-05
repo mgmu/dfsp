@@ -153,11 +153,12 @@ func main() {
 				}
 			}
 			knownPeersLock.Lock()
-			for name, peer := range knownPeers {
+			for _, peer := range knownPeers {
 				if time.Since(peer.lastInteraction) > 3*time.Minute {
-					delete(knownPeers, name)
+					peer.handshakeMade = false
 				}
 			}
+			knownPeersLock.Unlock()
 		}
 	}()
 
