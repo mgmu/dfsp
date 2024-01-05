@@ -138,7 +138,8 @@ func main() {
 		log.Fatal("Could not register to server: ", err)
 	}
 
-	// send keepalive periodically
+	// send keepalive periodically & remove peers that have not been seen for
+	// more than 3 minutes
 	go func() {
 		for {
 			time.Sleep(30 * time.Second)
@@ -149,6 +150,12 @@ func main() {
 				}
 				if err = serverRegistration(conn); err != nil {
 					log.Fatal("Could not register to server: ", err)
+				}
+			}
+			knownPeersLock.Lock()
+			for name, peer := range knownPeers {
+				if time.Since(peer.lastInteraction) > 3*time.Minute {
+					delete(knownPeers, name)
 				}
 			}
 		}
@@ -733,6 +740,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
+			updateInteractionTime(addr)
 			length := uint16(buf[5]) << 8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
@@ -972,6 +980,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 				fmt.Println("Sent RootReply response")
 			}
 		}
+		updateInteractionTime(addr)
 		return nil
 	case GetDatum:
 		if debug {
@@ -998,6 +1007,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 				fmt.Println("Sent NoDatum response")
 			}
 		}
+		updateInteractionTime(addr)
 		return nil
 	default:
 		return nil
