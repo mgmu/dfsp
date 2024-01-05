@@ -895,35 +895,37 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 		name, peer, _ := getPeerWith(addr)
 
-		if peer.implementsSignatures() {
-			if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
-				if debug {
-					fmt.Println("Signature invalid -> ignore request")
+		if peer.handshakeMade {
+			if peer.implementsSignatures() {
+				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					return nil
 				}
-				return nil
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+	
+			formatted := make([]byte, 64)
+			publicKey.X.FillBytes(formatted[:32])
+			publicKey.Y.FillBytes(formatted[32:])
+			resp := packet{
+				typ:  PublicKeyReply,
+				id:   id,
+				body: formatted,
+			}
+			_, err = conn.WriteTo(resp.Bytes(), addr)
+			if err != nil {
+				log.Fatal(fname, err)
+			}
+			if err = updateInteractionTime(addr); err != nil {
+				log.Fatal(fname, err)
 			}
 			if debug {
-				fmt.Println("Signature of " + name + " checks out")
+				fmt.Println("Sent PublicKeyReply response")
 			}
-		}
-
-		formatted := make([]byte, 64)
-		publicKey.X.FillBytes(formatted[:32])
-		publicKey.Y.FillBytes(formatted[32:])
-		resp := packet{
-			typ:  PublicKeyReply,
-			id:   id,
-			body: formatted,
-		}
-		_, err = conn.WriteTo(resp.Bytes(), addr)
-		if err != nil {
-			log.Fatal(fname, err)
-		}
-		if err = updateInteractionTime(addr); err != nil {
-			log.Fatal(fname, err)
-		}
-		if debug {
-			fmt.Println("Sent PublicKeyReply response")
 		}
 		return nil
 	case Root:
@@ -941,32 +943,34 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 
 		name, peer, _ := getPeerWith(addr)
-		if peer.implementsSignatures() {
-			if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
-				if debug {
-					fmt.Println("Signature invalid -> ignore request")
+		if peer.handshakeMade {
+			if peer.implementsSignatures() {
+				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					return nil
 				}
-				return nil
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+	
+			var rootHash []byte
+			if root == nil {
+				tmp := sha256.Sum256([]byte(""))
+				rootHash = tmp[:]
+			} else {
+				rootHash = root.hash[:]
+			}
+			resp := packet{RootReply, id, rootHash}
+			_, err = conn.WriteTo(resp.Bytes(), addr)
+			if err != nil {
+				log.Fatal(fname, err)
 			}
 			if debug {
-				fmt.Println("Signature of " + name + " checks out")
+				fmt.Println("Sent RootReply response")
 			}
-		}
-
-		var rootHash []byte
-		if root == nil {
-			tmp := sha256.Sum256([]byte(""))
-			rootHash = tmp[:]
-		} else {
-			rootHash = root.hash[:]
-		}
-		resp := packet{RootReply, id, rootHash}
-		_, err = conn.WriteTo(resp.Bytes(), addr)
-		if err != nil {
-			log.Fatal(fname, err)
-		}
-		if debug {
-			fmt.Println("Sent RootReply response")
 		}
 		return nil
 	case GetDatum:
@@ -980,14 +984,19 @@ func handleRequest(buf []byte, addr *net.UDPAddr, conn net.PacketConn) error {
 		if !known {
 			return nil
 		}
-		hash := buf[7 : 7+l]
-		resp := packet{NoDatum, id, hash}
-		_, err = conn.WriteTo(resp.Bytes(), addr)
+		_, peer, err := getPeerWith(addr)
 		if err != nil {
-			log.Fatal(fname, err)
-		}
-		if debug {
-			fmt.Println("Sent NoDatum response")
+			return err
+		} else if peer.handshakeMade {
+			hash := buf[7 : 7+l]
+			resp := packet{NoDatum, id, hash}
+			_, err = conn.WriteTo(resp.Bytes(), addr)
+			if err != nil {
+				log.Fatal(fname, err)
+			}
+			if debug {
+				fmt.Println("Sent NoDatum response")
+			}
 		}
 		return nil
 	default:

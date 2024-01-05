@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"bytes"
 	"crypto/sha256"
 	"errors"
@@ -27,10 +28,50 @@ name string) (*node, error) {
 	if debug {
 		fmt.Println("Unlocked id")
 	}
-	packet := packet{GetDatum, idDatum, hash}
+	packetDatum := packet{GetDatum, idDatum, hash}
+
+	for !knownPeers[peer].handshakeMade {
+		if debug {
+			fmt.Printf("Handshake with peer %s\n", peer)
+		}
+		var bufHello []byte
+		bufHello = binary.BigEndian.AppendUint32(bufHello, extensions)
+		bufHello = append(bufHello, peerName...)
+		idLock.Lock()
+		idHello := id
+		id++
+		idLock.Unlock()
+		helloRq := packet{
+			typ:  uint8(Hello),
+			id:   idHello,
+			body: bufHello,
+		}
+		addr := knownPeers[peer].addrs[0]
+		if bufr, err := writeExpBackoff(conn,addr, helloRq.Bytes());
+		err == nil {
+			if idr, _ := toId(bufr[0:4]); idr != idHello {
+				go func() {
+					if err = handleRequest(bufr, addr, conn); err != nil {
+						log.Fatal(err)
+					}
+				}()
+				continue
+			} else if typeRq := int(bufr[4]); typeRq == HelloReply {
+				if debug {
+					fmt.Printf("Handshake with %s done\n", peer)
+				}
+				knownPeersLock.Lock()
+				knownPeers[peer].handshakeMade = true
+				updateInteractionTime(addr)
+				knownPeersLock.Unlock()
+			}
+		} else {
+			return nil, err
+		}
+	}
 	for _, addr := range knownPeers[peer].addrs {
 		for {
-			if bufr, err := writeExpBackoff(conn, addr, packet.Bytes());
+			if bufr, err := writeExpBackoff(conn, addr, packetDatum.Bytes());
 			err == nil {
 				if idr, _ := toId(bufr[0:4]); idr != idDatum {
 					go func() {
