@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -23,16 +24,16 @@ import (
 )
 
 const (
-	serverUrl       = "https://" + serverName + ":" + serverPort
-	serverName      = "jch.irif.fr"
-	serverPort      = "8443"
-	peersUrl        = "/peers"
-	addressesUrl    = "/addresses"
-	keyUrl          = "/key"
-	rootHashUrl     = "/root"
-	peerName        = "Slartibartfast"
-	limitExpBackoff = 32
-	idLen           = 4
+	serverUrl                = "https://" + serverName + ":" + serverPort
+	serverName               = "jch.irif.fr"
+	serverPort               = "8443"
+	peersUrl                 = "/peers"
+	addressesUrl             = "/addresses"
+	keyUrl                   = "/key"
+	rootHashUrl              = "/root"
+	peerName                 = "Slartibartfast"
+	limitExpBackoff          = 32
+	idLen                    = 4
 	natTraversalRequestTries = 3
 )
 
@@ -124,7 +125,7 @@ func main() {
 					hashString := ""
 					if len(input) > 1 {
 						hashString = input[1]
-					} 
+					}
 					hash := []byte(hashString)
 					if hashString == "" {
 						hash = knownPeers[peer].rootHash
@@ -687,7 +688,7 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 				wait *= 2
 			}
 		} else {
-			length := uint16(buf[5]) << 8 | uint16(buf[6])
+			length := uint16(buf[5])<<8 | uint16(buf[6])
 			return buf[:7+length], nil
 		}
 	}
@@ -932,7 +933,15 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if debug {
 			fmt.Println("Handling GetDatum request")
 		}
+		knownPeersLock.Lock()
+		if debug {
+			fmt.Println("Locked knownPeers")
+		}
 		known, err := isKnownPeer(addr)
+		knownPeersLock.Unlock()
+		if debug {
+			fmt.Println("Unlocked knownPeers")
+		}
 		if err != nil {
 			log.Fatal(fname, err)
 		}
@@ -948,6 +957,211 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if debug {
 			fmt.Println("Sent NoDatum response")
 		}
+		return true, nil
+	case NatTraversal:
+		if debug {
+			fmt.Println("Received NatTraversal")
+		}
+		knownPeersLock.Lock()
+		if debug {
+			fmt.Println("Locked knownPeers")
+		}
+		server := knownPeers[serverName]
+		found := false
+		for _, other := range server.addrs {
+			if bytes.Equal(addr.IP, other.IP) && addr.Port == other.Port {
+				found = true
+			}
+		}
+		if !found {
+			knownPeersLock.Unlock()
+			if debug {
+				fmt.Println("Unlocked knownPeers")
+				fmt.Println("Ignore NatTraversal from other than server")
+			}
+			return false, nil
+		}
+		knownPeersLock.Unlock()
+		if debug {
+			fmt.Println("Unlocked knownPeers")
+		}
+
+		// send Hello to p
+		idLock.Lock()
+		if debug {
+			fmt.Println("Locked id")
+		}
+		idPack := id
+		id++
+		idLock.Unlock()
+		if debug {
+			fmt.Println("Unlocked id")
+		}
+		var body []byte
+		body = binary.BigEndian.AppendUint32(body, extensions)
+		body = append(body, peerName...)
+		pack := packet{
+			typ:  Hello,
+			id:   idPack,
+			body: body,
+		}
+		data := pack.Bytes()
+		if debug {
+			fmt.Println("Sending hello request")
+			fmt.Println("%v\n", data)
+		}
+		n, err := conn.WriteTo(data, addr)
+		if n != len(data) {
+			log.Fatal("packet truncated")
+		}
+		if err != nil {
+			log.Fatal("WriteTo:", err)
+		}
+
+		// wait hello reply from p
+		// TODO: factorize
+		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+		buf := make([]byte, 4+1+2+65536+1)
+		n, _, err = conn.ReadFrom(buf)
+		if n == len(buf) || n < minimalHelloPacketLength {
+			if debug {
+				fmt.Println("packet truncated")
+			}
+			return false, nil
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			}
+			if debug {
+				fmt.Println("Deadline exceeded, abort")
+			}
+			return false, nil
+		}
+		idBuf, _ := toId(buf[:4])
+		if pack.id != idBuf || buf[5] != HelloReply {
+			go func() {
+				if _, err = handleRequest(buf, addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			return false, nil
+		}
+		length := uint16(buf[5])<<8 | uint16(buf[6])
+		name := string(buf[11 : 11+length])
+
+		// check hello reply
+		// TODO: factorize
+		knownPeersLock.Lock()
+		if debug {
+			fmt.Println("Locked knownPeers")
+		}
+		peer, prs := knownPeers[name]
+		if prs {
+			if debug {
+				fmt.Println("Peer " + name + " is known")
+			}
+			if peer.implementsSignatures() {
+				if !checkSignature(buf[:7+length], buf[7+length:], peer.key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					knownPeersLock.Unlock()
+					if debug {
+						fmt.Println("Unlocked knownPeers")
+					}
+					return false, nil
+				}
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+			if err = updateInteractionTime(addr); err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			if debug {
+				fmt.Println("Peer " + name + " is unknown")
+			}
+			addrs, key, rootHash, err := fetchInfoFor(name)
+			if err != nil {
+				return false, err
+			}
+			if !slices.Equal(key, make([]byte, 64)) {
+				if !checkSignature(buf[:7+length], buf[7+length:], key) {
+					if debug {
+						fmt.Println("Signature invalid -> ignore request")
+					}
+					knownPeersLock.Unlock()
+					if debug {
+						fmt.Println("Unlocked knownPeers")
+					}
+					return false, nil
+				}
+				if debug {
+					fmt.Println("Signature of " + name + " checks out")
+				}
+			}
+			knownPeers[name] = newKnownPeer(addrs, key, rootHash)
+			knownPeersLock.Unlock()
+			if debug {
+				fmt.Println("Unlocked knownPeers")
+			}
+		}
+
+		// let p verify our signature
+		time.Sleep(time.Second)
+
+		// wait for hello from p
+		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
+		if err != nil {
+			log.Fatal("SetReadDeadline:", err)
+		}
+		buf = make([]byte, 4+1+2+65536+1)
+		n, _, err = conn.ReadFrom(buf)
+		if n == len(buf) || n < minimalHelloPacketLength {
+			if debug {
+				fmt.Println("packet truncated")
+			}
+			return false, nil
+		}
+		if err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Fatal("ReadFrom:", err)
+			}
+			if debug {
+				fmt.Println("Deadline exceeded")
+			}
+			return false, nil
+		}
+
+		idBuf, _ = toId(buf[:4])
+		if pack.id != idBuf || buf[5] != Hello {
+			go func() {
+				if _, err = handleRequest(buf, addr, conn); err != nil {
+					log.Fatal(err)
+				}
+			}()
+			return false, nil
+		}
+
+		ok, err := handleRequest(buf, addr, conn)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			if debug {
+				fmt.Println("Failed nat traversal")
+			}
+			return false, nil
+		}
+		if debug {
+			fmt.Println("Nat traversal success")
+		}
+
 		return true, nil
 	default:
 		return false, nil
@@ -992,6 +1206,8 @@ func getPeerWith(addr *net.UDPAddr) (string, *knownPeer, error) {
 	return "", nil, fmt.Errorf("peer with given address not found")
 }
 
+// natTraversalRequest starts a NAT traversal procedure. Use this function if
+// a peer can not be reached.
 func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 	// addr is q
 	body := addrToBytes(addr)
@@ -1014,8 +1230,8 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			fmt.Println("Unlocking id")
 		}
 		pack := packet{
-			typ: NatTraversalRequest,
-			id: idPack,
+			typ:  NatTraversalRequest,
+			id:   idPack,
 			body: body,
 		}
 		data := pack.Bytes()
@@ -1068,13 +1284,13 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			continue
 		}
 		length := uint16(buf[5])<<8 | uint16(buf[6])
-		name := string(buf[11: 11+length])
-		
+		name := string(buf[11 : 11+length])
+
 		// wait a little bit to let addr verify our signature if needed
 		time.Sleep(time.Second)
-		
+
 		// send a hello to addr
-		buf = make([]byte, 4 + len(peerName))
+		buf = make([]byte, 4+len(peerName))
 		buf = binary.BigEndian.AppendUint32(buf, extensions)
 		buf = append(buf, peerName...)
 		idLock.Lock()
@@ -1094,7 +1310,7 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		
+
 		// wait a certain amount of time the hello reply
 		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
 		if err != nil {
