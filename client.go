@@ -167,41 +167,44 @@ func main() {
 
 	// listen for requests
 	go func() {
-		for enable {
-			if debug {
-				fmt.Println("Listening...")
-			}
-			buf := make([]byte, 4+1+2+65536+1)
-			err = conn.SetReadDeadline((time.Now()).Add(time.Minute))
-			if err != nil {
-				fmt.Println(err)
-			}
-			n, addr, err := conn.ReadFrom(buf)
-			if err != nil {
-				if !errors.Is(err, os.ErrDeadlineExceeded) {
-					if debug {
-						fmt.Println("listen thread failed")
-					}
-					log.Fatal("ReadFrom:", err)
-				}
-				continue
-			}
-			if n == len(buf) || n < 7 {
+		for {
+			for enable {
 				if debug {
-					fmt.Println("packet truncated")
+					fmt.Println("Listening...")
 				}
-				continue
-			}
-			udpAddr, err := net.ResolveUDPAddr(addr.Network(), addr.String())
-			if err != nil {
-				if debug {
+				buf := make([]byte, 4+1+2+65536+1)
+				err = conn.SetReadDeadline((time.Now()).Add(time.Minute))
+				if err != nil {
 					fmt.Println(err)
 				}
-				continue
-			}
-			_, err = handleRequest(buf[:n], udpAddr, conn)
-			if debug {
-				fmt.Println("Handled request from listening thread")
+				n, addr, err := conn.ReadFrom(buf)
+				if err != nil {
+					if !errors.Is(err, os.ErrDeadlineExceeded) {
+						if debug {
+							fmt.Println("listen thread failed")
+						}
+						log.Fatal("ReadFrom:", err)
+					}
+					continue
+				}
+				if n == len(buf) || n < 7 {
+					if debug {
+						fmt.Println("packet truncated")
+					}
+					continue
+				}
+				udpAddr, err := net.ResolveUDPAddr(addr.Network(),
+					addr.String())
+				if err != nil {
+					if debug {
+						fmt.Println(err)
+					}
+					continue
+				}
+				_, err = handleRequest(buf[:n], udpAddr, conn)
+				if debug {
+					fmt.Println("Handled request from listening thread")
+				}
 			}
 		}
 	}()
