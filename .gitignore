@@ -6,3 +6,6 @@
 
 # Files from other peers
 data
+
+# Private key
+private.key
