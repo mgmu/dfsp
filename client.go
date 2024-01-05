@@ -1375,7 +1375,11 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			fmt.Println("Sending nat traversal request")
 			fmt.Println("%v\n", data)
 		}
-		n, err := conn.WriteTo(data, addr)
+		knownPeersLock.Lock()
+		server := knownPeers[serverName]
+		servAddr := server.addrs[0]
+		knownPeersLock.Unlock()
+		n, err := conn.WriteTo(data, servAddr)
 		if n != len(data) {
 			log.Fatal("packet truncated")
 		}
