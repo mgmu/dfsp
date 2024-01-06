@@ -145,7 +145,9 @@ func main() {
 	// more than 3 minutes
 	go func() {
 		for {
+			enable = true
 			time.Sleep(30 * time.Second)
+			enable = false
 			errKeepalive := sendKeepalive(conn)
 			if errKeepalive != nil {
 				if debug {
