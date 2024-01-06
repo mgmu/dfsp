@@ -24,17 +24,17 @@ import (
 )
 
 const (
-	serverUrl       = "https://" + serverName + ":" + serverPort
-	serverName      = "jch.irif.fr"
-	serverPort      = "8443"
-	peersUrl        = "/peers"
-	addressesUrl    = "/addresses"
-	keyUrl          = "/key"
-	rootHashUrl     = "/root"
-	peerName        = "Slartibartfast"
-	limitExpBackoff = 32
-	idLen           = 4
-	pkeyFile        = "private.key"
+	serverUrl                = "https://" + serverName + ":" + serverPort
+	serverName               = "jch.irif.fr"
+	serverPort               = "8443"
+	peersUrl                 = "/peers"
+	addressesUrl             = "/addresses"
+	keyUrl                   = "/key"
+	rootHashUrl              = "/root"
+	peerName                 = "Slartibartfast"
+	limitExpBackoff          = 32
+	idLen                    = 4
+	pkeyFile                 = "private.key"
 	natTraversalRequestTries = 3
 )
 
@@ -93,12 +93,12 @@ func main() {
 		pubY = *big.NewInt(0).SetBytes(buf[64:96])
 		publicKey = &ecdsa.PublicKey{
 			Curve: elliptic.P256(),
-			X: &pubX,
-			Y: &pubY,
+			X:     &pubX,
+			Y:     &pubY,
 		}
 		privateKey = &ecdsa.PrivateKey{
 			PublicKey: *publicKey,
-			D: &priv,
+			D:         &priv,
 		}
 		if f.Close() != nil {
 			log.Fatal("f.Close:", err)
@@ -113,7 +113,7 @@ func main() {
 			log.Fatal("failed to get public key from private key")
 		}
 		publicKey = tmp
-	
+
 		if f, err := os.Create(pkeyFile); err == nil {
 			if debug {
 				fmt.Printf("Writing private key to %s\n", pkeyFile)
@@ -225,6 +225,10 @@ func main() {
 				if knownPeers[peer] == nil {
 					fmt.Println("Unknown peer.")
 				} else {
+					if strings.Compare(peer, peerName) == 0 {
+						fmt.Println("You already have your data...")
+						continue
+					}
 					hashString := ""
 					if len(input) > 1 {
 						hashString = input[1]
@@ -799,19 +803,31 @@ func writeExpBackoff(conn net.PacketConn, addr *net.UDPAddr,
 		}
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				if debug {
+					fmt.Println("error from read")
+				}
 				log.Fatal("ReadFrom:", err)
 			}
 			if wait == 0 {
+				if debug {
+					fmt.Println("first send, increment")
+				}
 				wait++
 			} else {
+				if debug {
+					fmt.Println("after first send, double wait time")
+				}
 				wait *= 2
 			}
 		} else {
-			knownPeersLock.Lock()
+			if debug {
+				fmt.Println("error is nil, update interaction time")
+			}
 			updateInteractionTime(addr)
-			knownPeersLock.Unlock()
-			length := uint16(buf[5]) << 8 | uint16(buf[6])
-			return buf[:7+length], nil
+			if debug {
+				fmt.Println("about to return the received data")
+			}
+			return buf[:n], nil
 		}
 	}
 	return nil, fmt.Errorf("Exponential backoff limit exceeded")
@@ -832,13 +848,22 @@ func toId(bytes []byte) (uint32, error) {
 // Returns true if at least one of the known peers has the given UDP address. If
 // the given address is nil, returns an error.
 func isKnownPeer(addr *net.UDPAddr) (bool, error) {
+	if debug {
+		fmt.Println("checking is peer is known")
+	}
 	if addr == nil {
 		return false, fmt.Errorf("isKnownPeer: nil address")
 	}
 	for _, peer := range knownPeers {
 		if peer.has(addr) {
+			if debug {
+				fmt.Println("check finished")
+			}
 			return true, nil
 		}
+	}
+	if debug {
+		fmt.Println("check finished")
 	}
 	return false, nil
 }
@@ -846,6 +871,9 @@ func isKnownPeer(addr *net.UDPAddr) (bool, error) {
 // Updates the interaction time by setting it to time.Now() to all the known
 // peers that have the given UDP address. If none has it, returns an error.
 func updateInteractionTime(addr *net.UDPAddr) error {
+	if debug {
+		fmt.Println("updating interaction time")
+	}
 	fname := "updateInteractionTime"
 	if addr == nil {
 		return fmt.Errorf(fname + ": nil address")
@@ -865,6 +893,9 @@ func updateInteractionTime(addr *net.UDPAddr) error {
 			peer.lastInteraction = time.Now()
 		}
 	}
+	if debug {
+		fmt.Println("updated interaction time")
+	}
 	return nil
 }
 
@@ -883,6 +914,9 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 	}
 	id, _ := toId(buf[:4])
 	l := uint16(buf[5])<<8 | uint16(buf[6])
+	if len(buf) < int(7+l) {
+		return false, fmt.Errorf(fname + ": packet size does not match")
+	}
 	switch buf[4] {
 	case Error, ErrorReply:
 		log.Fatal("handleRequest:", buf[7:7+l])
@@ -907,6 +941,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				fmt.Println("Peer " + name + " is known")
 			}
 			if peer.implementsSignatures() {
+				if int(7+l) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -930,6 +970,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				return false, err
 			}
 			if !slices.Equal(key, make([]byte, 64)) {
+				if int(7+l) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+l], buf[7+l:], key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -979,6 +1025,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 
 		if peer.handshakeMade {
 			if peer.implementsSignatures() {
+				if int(7+l) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -989,7 +1041,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					fmt.Println("Signature of " + name + " checks out")
 				}
 			}
-	
+
 			formatted := make([]byte, 64)
 			publicKey.X.FillBytes(formatted[:32])
 			publicKey.Y.FillBytes(formatted[32:])
@@ -1027,6 +1079,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		name, peer, _ := getPeerWith(addr)
 		if peer.handshakeMade {
 			if peer.implementsSignatures() {
+				if int(7+l) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -1037,7 +1095,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					fmt.Println("Signature of " + name + " checks out")
 				}
 			}
-	
+
 			var rootHash []byte
 			if root == nil {
 				tmp := sha256.Sum256([]byte(""))
@@ -1146,7 +1204,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		}
 		data := pack.Bytes()
 		if debug {
-			fmt.Println("Sending hello request")
+			fmt.Println("NatTraversal: Sending hello request")
 			fmt.Println("%v\n", data)
 		}
 		n, err := conn.WriteTo(data, addr)
@@ -1167,7 +1225,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		n, _, err = conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
-				fmt.Println("packet truncated")
+				fmt.Println("NatTraversal: packet truncated")
 			}
 			return false, nil
 		}
@@ -1176,7 +1234,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				log.Fatal("ReadFrom:", err)
 			}
 			if debug {
-				fmt.Println("Deadline exceeded, abort")
+				fmt.Println("NatTraversal: deadline exceeded, abort")
 			}
 			return false, nil
 		}
@@ -1204,6 +1262,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				fmt.Println("Peer " + name + " is known")
 			}
 			if peer.implementsSignatures() {
+				if int(7+length) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+length], buf[7+length:], peer.key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -1230,6 +1294,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				return false, err
 			}
 			if !slices.Equal(key, make([]byte, 64)) {
+				if int(7+length) > len(buf) {
+					if debug {
+						fmt.Println("packet does not contain signature")
+					}
+					return false, nil
+				}
 				if !checkSignature(buf[:7+length], buf[7+length:], key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
@@ -1313,8 +1383,8 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 
 // Checks if the data was correctly signed
 func checkSignature(data, signature, key []byte) bool {
-	if debug {
-		fmt.Println("Checking signature...")
+	if len(key) != 64 || len(signature) != 64 {
+		return false
 	}
 	var x, y big.Int
 	x.SetBytes(key[:32])
