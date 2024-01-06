@@ -1159,6 +1159,12 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if debug {
 			fmt.Println("Received NatTraversal")
 		}
+		if l != 6 || l != 18 {
+			if debug {
+				fmt.Println("Received NatTraversal has invalid size")
+			}
+			return false, fmt.Errorf("packet truncated")
+		}
 		knownPeersLock.Lock()
 		if debug {
 			fmt.Println("Locked knownPeers")
@@ -1184,6 +1190,21 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		}
 
 		// send Hello to p
+		var ip []byte
+		var port uint16
+		if l == 6 {
+			ip = buf[7:11]
+			port = uint16(buf[11])<<8 | uint16(buf[12])
+		} else {
+			ip = buf[7:23]
+			port = uint16(buf[23])<<8 | uint16(buf[24])
+		}
+
+		pAddr := net.UDPAddr{
+			IP: ip,
+			Port: int(port),
+		}
+
 		idLock.Lock()
 		if debug {
 			fmt.Println("Locked id")
@@ -1207,7 +1228,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 			fmt.Println("NatTraversal: Sending hello request")
 			fmt.Println("%v\n", data)
 		}
-		n, err := conn.WriteTo(data, addr)
+		n, err := conn.WriteTo(data, &pAddr)
 		if n != len(data) {
 			log.Fatal("packet truncated")
 		}
@@ -1282,7 +1303,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					fmt.Println("Signature of " + name + " checks out")
 				}
 			}
-			if err = updateInteractionTime(addr); err != nil {
+			if err = updateInteractionTime(&pAddr); err != nil {
 				log.Fatal(err)
 			}
 		} else {
@@ -1330,7 +1351,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 			log.Fatal("SetReadDeadline:", err)
 		}
 		buf = make([]byte, 4+1+2+65536+1)
-		n, _, err = conn.ReadFrom(buf)
+		n, oAddr, err := conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
 				fmt.Println("packet truncated")
@@ -1349,15 +1370,24 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 
 		idBuf, _ = toId(buf[:4])
 		if pack.id != idBuf || buf[5] != Hello {
+			if strings.Compare(oAddr.Network(), "udp") != 0 {
+				fmt.Println("wrong network")
+				return false, nil
+			}
+			udpAddr, err := net.ResolveUDPAddr(oAddr.Network(),
+				oAddr.String())
+			if err != nil {
+				return false, err
+			}
 			go func() {
-				if _, err = handleRequest(buf, addr, conn); err != nil {
+				if _, err = handleRequest(buf, udpAddr, conn); err != nil {
 					log.Fatal(err)
 				}
 			}()
 			return false, nil
 		}
 
-		ok, err := handleRequest(buf, addr, conn)
+		ok, err := handleRequest(buf, &pAddr, conn)
 		if err != nil {
 			return false, err
 		}
@@ -1577,12 +1607,4 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		return nil
 	}
 	return fmt.Errorf("Failed NAT traversal")
-}
-
-func handleNatTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
-	// addr is p
-	if debug {
-		fmt.Println("handleNatTraversalRequest: TODO")
-	}
-	return nil
 }
