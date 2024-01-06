@@ -1159,7 +1159,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if debug {
 			fmt.Println("Received NatTraversal")
 		}
-		if l != 6 || l != 18 {
+		if l != 6 && l != 18 {
 			if debug {
 				fmt.Println("Received NatTraversal has invalid size")
 			}
