@@ -1453,6 +1453,27 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 	if body == nil {
 		return fmt.Errorf("failed to build nat traversal request packet")
 	}
+
+	noOpToPeer := true
+	// needed if we also are behind a NAT
+	go func() {
+		for noOpToPeer {
+			idLock.Lock()
+			idNoOp := id
+			id++
+			idLock.Unlock()
+			pack := packet{
+				typ: NoOp,
+				id:  idNoOp,
+			}
+			conn.WriteTo(pack.Bytes(), addr)
+			if debug {
+				fmt.Println("Sent NoOp to peer")
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+
 	for i := 0; i < natTraversalRequestTries; i++ {
 		if debug {
 			fmt.Printf("Try #%d of nat traversal\n", i)
@@ -1484,15 +1505,18 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		knownPeersLock.Unlock()
 		n, err := conn.WriteTo(data, servAddr)
 		if n != len(data) {
+			noOpToPeer = false
 			log.Fatal("packet truncated")
 		}
 		if err != nil {
+			noOpToPeer = false
 			log.Fatal("WriteTo:", err)
 		}
 
 		// wait a certain amount of time a hello from addr
 		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
 		if err != nil {
+			noOpToPeer = false
 			log.Fatal("SetReadDeadline:", err)
 		}
 		buf := make([]byte, 4+1+2+65536+1)
@@ -1521,6 +1545,7 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 		ok, err := handleRequest(buf, addr, conn)
 		if err != nil {
+			noOpToPeer = false
 			log.Fatal(err)
 		}
 		if !ok {
@@ -1548,15 +1573,18 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		data = pack.Bytes()
 		n, err = conn.WriteTo(data, addr)
 		if n != len(data) {
+			noOpToPeer = false
 			log.Fatal("packet truncated")
 		}
 		if err != nil {
+			noOpToPeer = false
 			log.Fatal(err)
 		}
 
 		// wait a certain amount of time the hello reply
 		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
 		if err != nil {
+			noOpToPeer = false
 			log.Fatal("SetReadDeadline:", err)
 		}
 		buf = make([]byte, 4+1+2+65536+1)
@@ -1569,6 +1597,7 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				noOpToPeer = false
 				log.Fatal("ReadFrom:", err)
 			}
 			// if deadline exceeded, try again
@@ -1601,10 +1630,13 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			}
 		}
 		if err = updateInteractionTime(addr); err != nil {
+			noOpToPeer = false
 			log.Fatal(err)
 		}
 		knownPeersLock.Unlock()
+		noOpToPeer = false
 		return nil
 	}
+	noOpToPeer = false
 	return fmt.Errorf("Failed NAT traversal")
 }
