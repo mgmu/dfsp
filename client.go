@@ -1608,11 +1608,3 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 	}
 	return fmt.Errorf("Failed NAT traversal")
 }
-
-func handleNatTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
-	// addr is p
-	if debug {
-		fmt.Println("handleNatTraversalRequest: TODO")
-	}
-	return nil
-}
