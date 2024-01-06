@@ -32,10 +32,10 @@ const (
 	keyUrl                   = "/key"
 	rootHashUrl              = "/root"
 	peerName                 = "Slartibartfast"
-	limitExpBackoff          = 32
+	limitExpBackoff          = 8
 	idLen                    = 4
 	pkeyFile                 = "private.key"
-	natTraversalRequestTries = 3
+	natTraversalRequestTries = 30
 )
 
 var (
@@ -174,7 +174,7 @@ func main() {
 				if debug {
 					fmt.Println("Listening...")
 				}
-				buf := make([]byte, 4+1+2+65536+1)
+				buf := make([]byte, 4+1+2+65536+64+1)
 				err = conn.SetReadDeadline((time.Now()).Add(time.Minute))
 				if err != nil {
 					fmt.Println(err)
@@ -311,7 +311,10 @@ func discoverPeers() {
 	for i := 0; i < l; i++ {
 		addrs, key, rootHash, err := fetchInfoFor(peers[i])
 		if err != nil {
-			log.Fatal("fetchInfoFor:", err)
+			if debug {
+				fmt.Println(err)
+			}
+			continue
 		}
 		knownPeersLock.Lock()
 		knownPeers[peers[i]] = newKnownPeer(addrs, key, rootHash)
@@ -921,7 +924,11 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 	}
 	switch buf[4] {
 	case Error, ErrorReply:
-		log.Fatal("handleRequest:", buf[7:7+l])
+		if debug {
+			fmt.Println("received error or error reply")
+		}
+		fmt.Println("handleRequest:", string(buf[7:7+l]))
+		return false, nil
 	case Hello:
 		if debug {
 			fmt.Println("Handling Hello request")
@@ -949,7 +956,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					}
 					return false, nil
 				}
-				if !checkSignature(buf[:7+l], buf[7+l:], peer.key) {
+				if !checkSignature(buf[:7+l], buf[7+l:7+l+64], peer.key) {
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
 					}
@@ -1256,7 +1263,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		data := pack.Bytes()
 		if debug {
 			fmt.Println("NatTraversal: Sending hello request")
-			fmt.Println("%v\n", data)
+			fmt.Printf("%v\n", data)
 		}
 		n, err := conn.WriteTo(data, &pAddr)
 		if n != len(data) {
@@ -1272,7 +1279,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if err != nil {
 			log.Fatal("SetReadDeadline:", err)
 		}
-		buf := make([]byte, 4+1+2+65536+1)
+		buf := make([]byte, 4+1+2+65536+64+1)
 		n, _, err = conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
@@ -1307,6 +1314,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if debug {
 			fmt.Println("Locked knownPeers")
 		}
+		knownPeersLock.Unlock()
 		peer, prs := knownPeers[name]
 		if prs {
 			if debug {
@@ -1323,7 +1331,6 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
 					}
-					knownPeersLock.Unlock()
 					if debug {
 						fmt.Println("Unlocked knownPeers")
 					}
@@ -1355,7 +1362,6 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					if debug {
 						fmt.Println("Signature invalid -> ignore request")
 					}
-					knownPeersLock.Unlock()
 					if debug {
 						fmt.Println("Unlocked knownPeers")
 					}
@@ -1365,6 +1371,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 					fmt.Println("Signature of " + name + " checks out")
 				}
 			}
+			knownPeersLock.Lock()
 			knownPeers[name] = newKnownPeer(addrs, key, rootHash)
 			knownPeersLock.Unlock()
 			if debug {
@@ -1380,11 +1387,11 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 		if err != nil {
 			log.Fatal("SetReadDeadline:", err)
 		}
-		buf = make([]byte, 4+1+2+65536+1)
+		buf = make([]byte, 4+1+2+65536+64+1)
 		n, oAddr, err := conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
-				fmt.Println("packet truncated")
+				fmt.Println("received truncated packet")
 			}
 			return false, nil
 		}
@@ -1444,7 +1451,15 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 // Checks if the data was correctly signed
 func checkSignature(data, signature, key []byte) bool {
 	if len(key) != 64 || len(signature) != 64 {
+		if debug {
+			fmt.Println("key of signature have wrong length")
+		}
 		return false
+	}
+	if debug {
+		fmt.Printf("things to check: %v\n", data)
+		fmt.Printf("signature of peer: %v\n", signature)
+		fmt.Printf("peer key: %v\n", key)
 	}
 	var x, y big.Int
 	x.SetBytes(key[:32])
@@ -1480,6 +1495,9 @@ func getPeerWith(addr *net.UDPAddr) (string, *knownPeer, error) {
 func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 	// addr is q
 	body := addrToBytes(addr)
+	if debug {
+		fmt.Printf("address to send to server for nat traversal: %v\n", body)
+	}
 	if body == nil {
 		return fmt.Errorf("failed to build nat traversal request packet")
 	}
@@ -1527,12 +1545,21 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		data := pack.Bytes()
 		if debug {
 			fmt.Println("Sending nat traversal request")
-			fmt.Println("%v\n", data)
+			fmt.Printf("%v\n", data)
+		}
+		if debug {
+			fmt.Println("About to lock known peers")
 		}
 		knownPeersLock.Lock()
+		if debug {
+			fmt.Println("Locked known peers")
+		}
 		server := knownPeers[serverName]
 		servAddr := server.addrs[0]
 		knownPeersLock.Unlock()
+		if debug {
+			fmt.Println("Unlocked known peers")
+		}
 		n, err := conn.WriteTo(data, servAddr)
 		if n != len(data) {
 			noOpToPeer = false
@@ -1543,16 +1570,22 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			log.Fatal("WriteTo:", err)
 		}
 
+		if debug {
+			fmt.Println("sent nat traversal request to server")
+		}
+
 		// wait a certain amount of time a hello from addr
 		err = conn.SetReadDeadline((time.Now()).Add(time.Second))
 		if err != nil {
 			noOpToPeer = false
 			log.Fatal("SetReadDeadline:", err)
 		}
-		buf := make([]byte, 4+1+2+65536+1)
+		buf := make([]byte, 4+1+2+65536+64+1)
 		n, _, err = conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
+				fmt.Println("n == len(buf):", n == len(buf))
+				fmt.Println("n < minimalHelloPacketLength:", n < minimalHelloPacketLength)
 				fmt.Println("packet truncated")
 			}
 			continue
@@ -1561,29 +1594,61 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
 				log.Fatal("ReadFrom:", err)
 			}
+			if debug {
+				fmt.Println("deadline exceeded, trying again")
+			}
 			// if deadline exceeded, try again
 			continue
 		}
+		if debug {
+			fmt.Println("error is nil !")
+		}
 		idBuf, _ := toId(buf[:4])
 		if pack.id != idBuf || buf[5] != Hello {
+			if debug {
+				fmt.Println("ids differ, let the handler do its work")
+			}
 			go func() {
 				if _, err = handleRequest(buf, addr, conn); err != nil {
-					log.Fatal(err)
+					if debug {
+						fmt.Println("error handling request:", err)
+					}
 				}
 			}()
+			if debug {
+				fmt.Println("trying again")
+			}
 			continue
 		}
+		if debug {
+			fmt.Println("let the handler deal with the Hello from q")
+		}
 		ok, err := handleRequest(buf, addr, conn)
+		if debug {
+			fmt.Println("handler did its job")
+		}
 		if err != nil {
 			noOpToPeer = false
+			if debug {
+				fmt.Println("error just before log.Fatal")
+			}
 			log.Fatal(err)
 		}
 		if !ok {
+			if debug {
+				fmt.Println("handler said not ok")
+			}
 			continue
+		}
+		if debug {
+			fmt.Println("handler said everything is ok")
 		}
 		length := uint16(buf[5])<<8 | uint16(buf[6])
 		name := string(buf[11 : 11+length])
 
+		if debug {
+			fmt.Println("Sleeping to let addr check sign")
+		}
 		// wait a little bit to let addr verify our signature if needed
 		time.Sleep(time.Second)
 
@@ -1617,7 +1682,7 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			noOpToPeer = false
 			log.Fatal("SetReadDeadline:", err)
 		}
-		buf = make([]byte, 4+1+2+65536+1)
+		buf = make([]byte, 4+1+2+65536+64+1)
 		n, _, err = conn.ReadFrom(buf)
 		if n == len(buf) || n < minimalHelloPacketLength {
 			if debug {
@@ -1634,6 +1699,10 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 			continue
 		}
 
+		if debug {
+			fmt.Println("received hello reply, we suppose")
+		}
+
 		idBuf, _ = toId(buf[:4])
 		if pack.id != idBuf || buf[5] != Hello {
 			go func() {
@@ -1642,6 +1711,10 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 				}
 			}()
 			continue
+		}
+
+		if debug {
+			fmt.Println("hello reply indeed")
 		}
 
 		length = uint16(buf[5])<<8 | uint16(buf[6])
@@ -1665,6 +1738,9 @@ func natTraversalRequest(addr *net.UDPAddr, conn net.PacketConn) error {
 		}
 		knownPeersLock.Unlock()
 		noOpToPeer = false
+		if debug {
+			fmt.Println("Returning nil in natTraversalRequest -> Success")
+		}
 		return nil
 	}
 	noOpToPeer = false
