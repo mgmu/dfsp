@@ -31,9 +31,9 @@ type node struct {
 
 // Generates the Merkle tree structure corresponding to the tree structure
 // denoted by name. If an error occurs, returns nil and the error.
-func from(name string) (*node, error) {
+func fromExistingFile(name string) (*node, error) {
 	if debug {
-		fmt.Printf("\n\nnode.from()\n")
+		fmt.Printf("\n\nnode.fromExistingFile()\n")
 	}
 	f, err := os.Open(name)
 	if err != nil {
@@ -57,9 +57,36 @@ func from(name string) (*node, error) {
 		}
 		if size > 32 * 1024 {
 			if debug {
-				fmt.Println("File too big, log.Fatal() incoming")
+				fmt.Println("File too big, dividing it")
 			}
-			log.Fatal("node.from(): File size not yet supported...")
+			data, err := os.ReadFile(name)
+			if err != nil {
+				return nil, err
+			}
+			var children []*node
+			step := len(data) / 31
+			for i := 0; i < len(data); i += step {
+				bound := i + step
+				if bound > len(data) {
+					bound = len(data)
+				}
+				childNode, err := fromData(data[i:bound])
+				if err != nil {
+					return nil, err
+				}
+				children = append(children, childNode)
+			}
+			if len(children) > 32 {
+				log.Fatalf("fromExistingFile(): too many children (%d)\n",
+				len(children))
+			}
+			return &node {
+				category: BigFile,
+				hash: hashFrom(children, BigFile),
+				children: children,
+				name: name,
+				data: nil,
+			}, nil
 		} else if size > 1024 && size <= 32 * 1024 {
 			if debug {
 				fmt.Printf("Big file of less than %d bytes\n", 32*1024)
@@ -137,7 +164,7 @@ func from(name string) (*node, error) {
 			fmt.Println("Read entries")
 		}
 		if len(entries) > 16 {
-			return nil, fmt.Errorf("node.from(): too many entries in dir")
+			return nil, fmt.Errorf("node.fromExistingFile(): too many entries in dir")
 		}
 		if debug {
 			fmt.Println("Less than 16 entries")
@@ -148,7 +175,7 @@ func from(name string) (*node, error) {
 				fmt.Printf("Rec call to [%s]\n", name + "/" + child.Name())
 				
 			}
-			nd, err := from(name + "/" + child.Name())
+			nd, err := fromExistingFile(name + "/" + child.Name())
 			if err != nil {
 				return nil, err
 			}
@@ -165,7 +192,58 @@ func from(name string) (*node, error) {
 		}
 		return new, nil
 	}
-	return nil, fmt.Errorf("node.from(): unsupported file mode %d", mode)
+	return nil, fmt.Errorf("node.fromExistingFile(): unsupported file mode %d",
+		mode)
+}
+
+// Generates the Merkle tree structure corresponding to the tree structure
+// denoted by data. If an error occurs, returns nil and the error.
+func fromData(data []byte) (*node, error) {
+	if debug {
+		fmt.Printf("fromData(): data of length %d\n", len(data))
+	}
+	if len(data) <= 1024 {
+		if debug {
+			fmt.Println("fromData(): Creating Chunk")
+		}
+		return &node{
+			category: Chunk,
+			hash: sha256.Sum256(data),
+			name: "",
+			data: data,
+		}, nil
+	} else {
+		if debug {
+			fmt.Println("fromData(): File too big, dividing it")
+		}
+		var children []*node
+		step := len(data) / 31
+		for i := 0; i < len(data); i += step {
+			bound := i + step
+			if bound > len(data) {
+				bound = len(data)
+			}
+			child, err := fromData(data[i:bound])
+			if err != nil {
+				return nil, err
+			}
+			children = append(children, child)
+		}
+		if len(children) > 32 {
+			log.Fatalf("fromData(): too many children (%d)\n", len(children))
+		}
+		hash := hashFrom(children, BigFile)
+		if debug {
+			fmt.Println("fromData(): Creating BigFile")
+		}
+		return &node{
+			category: BigFile,
+			hash: hash,
+			children: children,
+			name: "",
+			data: nil,
+		}, nil
+	}
 }
 
 // Computes the hash of the concatenation of the hashes of the nodes in children
@@ -252,4 +330,31 @@ func (n *node) Write(path string) error {
 		return errors.New("node.Write(): unknown node category")
 	}
 	return nil
+}
+
+// Gets the node corresponding to the given hash in the children of the current
+// node, or the current node itself. Returns error if any occurs.
+func (n *node) GetNode(hash [32]byte) (*node, error) {
+	if debug {
+		fmt.Printf("GetNode(): hash %v\n", hash)
+	}
+	notFound := errors.New("Hash not found")
+	if n.hash == hash {
+		return n, nil
+	} else if n.category == Chunk {
+		return nil, notFound
+	} else {
+		children := n.children
+		for len(children) > 0 {
+			if children[0].hash == hash {
+				return children[0], nil
+			} else if children[0].category == BigFile ||
+				children[0].category == Directory {
+				children = append(children[0].children, children[1:]...)
+			} else {
+				children = children[1:]
+			}
+		}
+		return nil, notFound
+	}
 }

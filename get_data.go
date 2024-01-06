@@ -78,15 +78,20 @@ name string) (*node, error) {
 				knownPeers[peer].handshakeMade = true
 				updateInteractionTime(addr)
 			}
-		} else {
-			if debug {
-				fmt.Println("an error occured, exiting...")
-			}
-			knownPeersLock.Unlock()
-			return nil, err
 		}
 	}
 	knownPeersLock.Unlock()
+	if !knownPeers[peer].handshakeMade {
+		if debug {
+			fmt.Printf("Trying nat traversal with %s\n", peer)
+		}
+		knownPeersLock.Lock()
+		addr := knownPeers[peer].addrs[0]
+		knownPeersLock.Unlock()
+		if err := natTraversalRequest(addr, conn); err != nil {
+			return nil, err
+		}
+	}
 	for _, addr := range knownPeers[peer].addrs {
 		for {
 			if bufr, err := writeExpBackoff(conn, addr, packetDatum.Bytes());
@@ -109,7 +114,8 @@ name string) (*node, error) {
 					}
 					hashr := bufr[7:39]
 					if bytes.Equal(hashr, hash) {
-						return nil, errors.New("Peer does not have datum")
+						return nil, 
+							errors.New("Peer does not have requested datum")
 					} else {
 						return nil, errors.New("Peer answered with wrong hash")
 					}
