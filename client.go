@@ -1172,6 +1172,7 @@ func handleRequest(buf []byte, addr *net.UDPAddr,
 				default:
 					log.Fatal("handleRequest: unknown node category")
 				}
+				resp = packet{Datum, id, body}
 			}
 			_, err = conn.WriteTo(resp.Bytes(), addr)
 			if err != nil {
