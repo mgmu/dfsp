@@ -98,8 +98,10 @@ func addrToBytes(addr *net.UDPAddr) []byte {
 	if addr == nil {
 		return nil
 	}
-	res := addr.IP
-	port := uint16(addr.Port)
-	res = binary.BigEndian.AppendUint16(res, port)
+	res := addr.To4()
+	if res == nil {
+		res = addr.To6()
+	}
+	res = binary.BigEndian.AppendUint16(res, uint16(addr.Port))
 	return res
 }
